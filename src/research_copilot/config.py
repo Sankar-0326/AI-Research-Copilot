@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     retrieval_top_k: int = 5
 
+    # Tavily
+    tavily_api_key: str
+
 
 # @lru_cache() - ensures settings are loaded from disk only once and reused across the app — a production pattern.
 @lru_cache()

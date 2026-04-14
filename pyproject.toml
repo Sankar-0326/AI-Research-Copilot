@@ -29,6 +29,10 @@ dependencies = [
     "openai>=1.30.0",
     "tiktoken>=0.7.0",
 
+    # Tavily 
+    "tavily-python>=0.3.0",
+    "langchain-tavily>=0.1.0",
+
     # Config & Env
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
