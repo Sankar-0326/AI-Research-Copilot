@@ -9,22 +9,61 @@ from research_copilot.agents.report_assembler import report_assembler
 
 def should_run_insight(state: ResearchState) -> str:
     """
-    Conditional edge after summarization.
-    Skip insight if summarization produced no results.
+    After summarization:
+    - If ALL papers failed → hard fail, go to report with failed status
+    - If SOME papers succeeded → proceed with what we have
+    - If ALL succeeded → normal flow
     """
-    if not state.get("summaries"):
-        return "skip_to_report"
+    summaries = state.get("summaries", {})
+    paper_ids = state.get("paper_ids", [])
+
+    if not summaries:
+        # Zero summaries produced — nothing useful to synthesize
+        print("--- No summaries produced — marking pipeline as failed ---")
+        return "hard_fail"
+
+    if len(summaries) < len(paper_ids):
+        # Partial success — warn but continue
+        failed_count = len(paper_ids) - len(summaries)
+        print(f"--- {failed_count}/{len(paper_ids)} papers failed summarization — continuing with partial results ---")
+
     return "run_insight"
 
 
 def should_run_gap_detection(state: ResearchState) -> str:
     """
-    Conditional edge after insight.
-    Skip gap detection if insight agent failed.
+    After insight:
+    - If insight produced nothing → still run gap detection
+      because gap detection has its own retrieval and can work
+      from summaries alone
+    - Never skip gap detection unless we're already in failed state
     """
-    if not state.get("insights"):
-        return "skip_to_report"
+    if state.get("status") == "failed":
+        return "hard_fail"
     return "run_gap_detection"
+
+
+def mark_failed(state: ResearchState) -> ResearchState:
+    """
+    Hard failure node — pipeline couldn't produce meaningful output.
+    Sets status to 'failed' and assembles an error report.
+    """
+    error_summary = "\n".join(f"- {e}" for e in state.get("errors", []))
+
+    return {
+        **state,
+        "status": "failed",
+        "final_report": (
+            f"# Research Pipeline Failed\n\n"
+            f"**Query:** {state['query']}\n\n"
+            f"## Errors\n{error_summary or '- Unknown failure'}\n\n"
+            f"## Suggestion\n"
+            f"- Verify paper_ids exist in Pinecone\n"
+            f"- Re-ingest papers using `/upload-paper`\n"
+            f"- Check API keys in `.env`"
+        ),
+        "current_agent": "done",
+    }
 
 
 def build_research_graph() -> StateGraph:
@@ -43,6 +82,7 @@ def build_research_graph() -> StateGraph:
     graph.add_node("insight", insight_agent)
     graph.add_node("gap_detection", gap_detection_agent)
     graph.add_node("report_assembler", report_assembler)
+    graph.add_node("mark_failed", mark_failed) 
 
     # ── Entry point ─────────────────────────────────────────────────
     graph.set_entry_point("summarization")
@@ -53,7 +93,7 @@ def build_research_graph() -> StateGraph:
         should_run_insight,
         {
             "run_insight": "insight",
-            "skip_to_report": "report_assembler",
+            "hard_fail": "mark_failed",
         }
     )
 
@@ -62,13 +102,14 @@ def build_research_graph() -> StateGraph:
         should_run_gap_detection,
         {
             "run_gap_detection": "gap_detection",
-            "skip_to_report": "report_assembler",
+            "hard_fail": "mark_failed",
         }
     )
 
     # ── Linear edges ────────────────────────────────────────────────
     graph.add_edge("gap_detection", "report_assembler")
     graph.add_edge("report_assembler", END)
+    graph.add_edge("mark_failed", END)
 
     return graph.compile()
 
