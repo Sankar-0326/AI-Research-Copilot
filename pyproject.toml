@@ -49,3 +49,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/research_copilot"]
+
+[tool.uv.scripts]
+dev = "uvicorn research_copilot.main:app --reload --host 0.0.0.0 --port 8000"
