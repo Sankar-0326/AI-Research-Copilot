@@ -6,9 +6,15 @@ from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
 from research_copilot.cache.response_cache import response_cache
+from research_copilot.utils import retry_openai, timed
 
 
 logger = get_logger("insight_agent")
+
+@retry_openai
+@timed("summarization_llm")
+def _call_llm(chain, inputs: dict) -> str:
+    return chain.invoke(inputs)
 
 
 INSIGHT_PROMPT = ChatPromptTemplate.from_messages([
@@ -114,11 +120,12 @@ def insight_agent(state: ResearchState) -> ResearchState:
             for pid, summary in state.get("summaries", {}).items()
         ]) or "No summaries available yet."
 
-        response = chain.invoke({
-            "query": state["query"],
-            "summaries": summaries_block,
-            "context": context,
-        })
+        response = _call_llm(chain= chain, 
+                                 inputs= {
+                                    "query": state["query"],
+                                    "summaries": summaries_block,
+                                    "context": context,
+                                 })
 
         # ── Cache set ─────────────────────────────────────────────────
         response_cache.set(

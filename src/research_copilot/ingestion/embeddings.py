@@ -9,6 +9,7 @@ from research_copilot.config import get_settings
 from research_copilot.ingestion.chunker import ChunkedPaper
 from research_copilot.logging import get_logger
 from research_copilot.cache.embedding_cache import embedding_cache
+from research_copilot.utils import retry_pinecone
 
 
 logger = get_logger(__name__)
@@ -108,6 +109,7 @@ def get_vectorstore() -> PineconeVectorStore:
     )
 
 
+@retry_pinecone
 def embed_and_store(chunked_paper: ChunkedPaper) -> int:
     """
     Embed all chunks and upsert into Pinecone.

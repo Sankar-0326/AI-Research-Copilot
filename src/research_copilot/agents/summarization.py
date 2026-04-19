@@ -9,12 +9,17 @@ from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
 from research_copilot.cache.response_cache import response_cache
 from research_copilot.evaluation.evaluator import RAGEvaluator
+from research_copilot.utils import retry_openai, timed
 
 
 logger = get_logger("summarization_agent")
 
 evaluator = RAGEvaluator()
 
+@retry_openai
+@timed("summarization_llm")
+def _call_llm(chain, inputs: dict) -> str:
+    return chain.invoke(inputs)
 
 
 SUMMARIZATION_PROMPT = ChatPromptTemplate.from_messages([
@@ -117,11 +122,12 @@ def summarization_agent(state: ResearchState) -> ResearchState :
             # ── Timed LLM call ────────────────────────────────────────────
             start_time = time.time()
 
-            response = chain.invoke({
-                "paper_id": paper_id,
-                "context": context,
-                "query": state["query"],
-            })
+            response = _call_llm(chain= chain, 
+                                 inputs= {
+                                    "paper_id": paper_id,
+                                    "context": context,
+                                    "query": state["query"],
+                                 })
 
             elapsed = time.time() - start_time  # computed immediately after
 
