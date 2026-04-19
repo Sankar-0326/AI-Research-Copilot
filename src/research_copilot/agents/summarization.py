@@ -5,6 +5,10 @@ from langchain_core.documents import Document
 from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
+from research_copilot.logging import get_logger
+
+
+logger = get_logger("summarization_agent")
 
 
 SUMMARIZATION_PROMPT = ChatPromptTemplate.from_messages([
@@ -98,12 +102,12 @@ def summarization_agent(state: ResearchState) -> ResearchState :
             })
             
             summaries[paper_id] = response.content
-            print(f"--- Summarization complete for paper: {paper_id[:8]}... ---")
+            logger.info("summary_complete", paper_id=paper_id[:8], chunks_used=len(docs))
 
         except Exception as e:
             error_msg = f"Summarization failed for {paper_id[:8]}: {str(e)}"
             errors.append(error_msg)
-            print(f"{error_msg}")
+            logger.error("operation_failed", error=error_msg, paper_id=paper_id[:8])
 
     completed = list(state.get("completed_agents", []))
     completed.append("summarization")

@@ -1,10 +1,15 @@
 import asyncio
+import time
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 
 from research_copilot.config import get_settings
 from research_copilot.ingestion.chunker import ChunkedPaper
+from research_copilot.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 def _get_pinecone_index():
@@ -15,7 +20,11 @@ def _get_pinecone_index():
     existing_indexes = [idx.name for idx in pc.list_indexes()]
 
     if settings.pinecone_index_name not in existing_indexes:
-        print(f"Creating Pinecone index '{settings.pinecone_index_name}'...")
+        logger.info(
+            "pinecone_index_creation_started",
+            index_name=settings.pinecone_index_name
+            )
+        
         pc.create_index(
             name= settings.pinecone_index_name,
             dimension=1536,  # text-embedding-3-small dimension
@@ -54,6 +63,14 @@ def embed_and_store(chunked_paper: ChunkedPaper) -> int:
     Embed all chunks and upsert into Pinecone.
     Returns the number of chunks stored.
     """
+    start_time = time.time()
+
+    logger.info(
+        "pinecone_chunks_upsert_started",
+        filename=chunked_paper.filename,
+        paper_id=chunked_paper.paper_id,
+    )
+
     vectorstore = get_vectorstore()
 
     # Use paper_id as the namespace to isolate papers from each other
@@ -62,10 +79,14 @@ def embed_and_store(chunked_paper: ChunkedPaper) -> int:
         namespace=chunked_paper.paper_id,
     )
 
-    print(
-        f"--- Stored {len(chunked_paper.chunks)} chunks ---"
-        f"for paper '{chunked_paper.filename}' "
-        f"(namespace: {chunked_paper.paper_id})"
-    )
+    chunk_count = len(chunked_paper.chunks)
+
+    logger.info(
+        "pinecone_chunks_upsert_completed",
+        chunk_count=chunk_count,
+        filename=chunked_paper.filename,
+        namespace=chunked_paper.paper_id,
+        duration=round(time.time() - start_time, 2),
+        )
 
     return len(chunked_paper.chunks)

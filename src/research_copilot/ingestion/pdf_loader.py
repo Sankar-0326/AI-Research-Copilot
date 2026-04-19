@@ -6,6 +6,8 @@ import pdfplumber
 # Why pdfplumber over pypdf? Research papers often have multi-column layouts and dense formatting. 
 # pdfplumber handles those significantly better for text extraction.
 
+from research_copilot.logging import get_logger
+logger = get_logger(__name__)
 
 @dataclass
 class ParsedPaper:
@@ -29,6 +31,11 @@ def load_pdf(file_path: str | Path, filename: str | None = None) -> ParsedPaper:
     Extract text from a PDF file using pdfplumber.
     Handles multi-column layouts better than pypdf for research papers.
     """
+    logger.info(
+        "pdf_load_started",
+        filename=filename,
+        path=str(file_path),
+    )
     file_path = Path(file_path)
     filename = filename or file_path.name
 
@@ -39,19 +46,46 @@ def load_pdf(file_path: str | Path, filename: str | None = None) -> ParsedPaper:
 
     with pdfplumber.open(file_path) as pdf:
         page_count = len(pdf.pages)
-        for page in pdf.pages:
+        logger.info(
+                "pdf_opened",
+                filename=filename,
+                paper_id=paper_id,
+                page_count=page_count,
+            )
+        for page_number, page in enumerate(pdf.pages, start=1):
             text = page.extract_text(x_tolerance=2, y_tolerance=3)
             if text:
                 pages_text.append(text.strip())
+            else:
+                    logger.warning(
+                        "pdf_page_empty",
+                        filename=filename,
+                        paper_id=paper_id,
+                        page_number=page_number,
+                    )
 
     full_text = "\n\n".join(pages_text)
 
     if not full_text.strip():
+        logger.error(
+            "pdf_text_extraction_failed",
+            filename=filename,
+            paper_id=paper_id,
+        )
         raise ValueError(
             f"Could not extract text from '{filename}'. "
             "The PDF may be scanned/image-based and requires OCR."
         )
     
+    logger.info(
+        "pdf_load_completed",
+        filename=filename,
+        paper_id=paper_id,
+        page_count=page_count,
+        extracted_pages=len(pages_text),
+        total_characters=len(full_text),
+    )
+
     return ParsedPaper(
         paper_id= paper_id,
         filename= filename,

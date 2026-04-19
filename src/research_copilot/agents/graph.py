@@ -5,6 +5,10 @@ from research_copilot.agents.summarization import summarization_agent
 from research_copilot.agents.insight import insight_agent
 from research_copilot.agents.gap_detection import gap_detection_agent
 from research_copilot.agents.report_assembler import report_assembler
+from research_copilot.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 def should_run_insight(state: ResearchState) -> str:
@@ -19,13 +23,26 @@ def should_run_insight(state: ResearchState) -> str:
 
     if not summaries:
         # Zero summaries produced — nothing useful to synthesize
-        print("--- No summaries produced — marking pipeline as failed ---")
+        logger.error(
+            "summarization_failed_all",
+            paper_count=len(paper_ids),
+        )
         return "hard_fail"
 
     if len(summaries) < len(paper_ids):
         # Partial success — warn but continue
         failed_count = len(paper_ids) - len(summaries)
-        print(f"--- {failed_count}/{len(paper_ids)} papers failed summarization — continuing with partial results ---")
+        logger.warning(
+            "summarization_partial_success",
+            total_papers=len(paper_ids),
+            successful=len(summaries),
+            failed=failed_count,
+        )
+
+    logger.info(
+        "summarization_sufficient_for_insight",
+        summaries=len(summaries),
+    )
 
     return "run_insight"
 
@@ -39,7 +56,14 @@ def should_run_gap_detection(state: ResearchState) -> str:
     - Never skip gap detection unless we're already in failed state
     """
     if state.get("status") == "failed":
+        logger.error(
+            "insight_stage_failed",
+            reason="upstream_failure",
+        )
         return "hard_fail"
+    
+    logger.info("proceed_to_gap_detection")
+
     return "run_gap_detection"
 
 
@@ -49,6 +73,13 @@ def mark_failed(state: ResearchState) -> ResearchState:
     Sets status to 'failed' and assembles an error report.
     """
     error_summary = "\n".join(f"- {e}" for e in state.get("errors", []))
+    errors = state.get("errors", [])
+
+    logger.error(
+        "pipeline_failed",
+        error_count=len(errors),
+        query=state.get("query"),
+    )
 
     return {
         **state,
@@ -110,6 +141,8 @@ def build_research_graph() -> StateGraph:
     graph.add_edge("gap_detection", "report_assembler")
     graph.add_edge("report_assembler", END)
     graph.add_edge("mark_failed", END)
+
+    logger.info("research_graph_compiled")
 
     return graph.compile()
 

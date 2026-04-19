@@ -4,6 +4,10 @@ from langchain_core.documents import Document
 
 from research_copilot.config import get_settings
 from research_copilot.ingestion.pdf_loader import ParsedPaper
+from research_copilot.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -19,6 +23,15 @@ def chunk_paper(parsed_paper: ParsedPaper) -> ChunkedPaper:
     Uses recursive character splitting — respects paragraph/sentence boundaries.
     """
     settings = get_settings()
+
+    logger.info(
+        "chunking_started",
+        paper_id=parsed_paper.paper_id,
+        filename=parsed_paper.filename,
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        input_characters=len(parsed_paper.full_text),
+    )
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size = settings.chunk_size,
@@ -41,6 +54,13 @@ def chunk_paper(parsed_paper: ParsedPaper) -> ChunkedPaper:
         )
         for i, chunk in enumerate(raw_chunks)
     ]
+
+    logger.info(
+        "chunking_completed",
+        paper_id=parsed_paper.paper_id,
+        filename=parsed_paper.filename,
+        total_chunks=len(raw_chunks),
+    )
 
     return ChunkedPaper(
         paper_id= parsed_paper.paper_id,

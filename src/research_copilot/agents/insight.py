@@ -4,6 +4,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
+from research_copilot.logging import get_logger
+
+
+logger = get_logger("insight_agent")
 
 
 INSIGHT_PROMPT = ChatPromptTemplate.from_messages([
@@ -101,14 +105,22 @@ def insight_agent(state: ResearchState) -> ResearchState:
         raw_insights = response.content
         insights = [raw_insights]  # store as full structured block
 
-        print(f"--- Insight Agent complete — {len(docs)} docs used "
-              f"({sum(1 for d in docs if d.metadata.get('retrieval_type') == 'web')} web) ---")
+        total_docs = len(docs)
+        web_docs = sum(1 for d in docs if d.metadata.get("retrieval_type") == "web")
+        logger.info(
+            "insight_agent_completed",
+            total_docs=total_docs,
+            web_docs=web_docs
+        )
         
     except Exception as e:
         error_msg = f"Insight agent failed: {str(e)}"
         errors.append(error_msg)
         insights = []
-        print(f"{error_msg}")
+        logger.error(
+            "insight_failed",
+            error=error_msg,
+            )
 
     completed = list(state.get("completed_agents", []))
     completed.append("insight")

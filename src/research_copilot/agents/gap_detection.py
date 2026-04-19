@@ -4,6 +4,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
+from research_copilot.logging import get_logger
+
+
+logger = get_logger("gap_detection_agent")
 
 
 GAP_DETECTION_PROMPT = ChatPromptTemplate.from_messages([
@@ -110,14 +114,17 @@ def gap_detection_agent(state: ResearchState) -> ResearchState:
         research_gaps = [full_response]   # stored as structured block
         future_directions = []            # extracted in report assembler
 
-        print(f"Gap Detection complete")
+        logger.info("gap_detection_completed")
 
     except Exception as e:
         error_msg = f"Gap detection failed: {str(e)}"
         errors.append(error_msg)
         research_gaps = []
         future_directions = []
-        print(f"{error_msg}")
+        logger.error(
+            "gap_detection_failed",
+            error=error_msg,
+            )
 
     completed = list(state.get("completed_agents", []))
     completed.append("gap_detection")
