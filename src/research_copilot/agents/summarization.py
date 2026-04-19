@@ -1,3 +1,4 @@
+import time
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
@@ -7,9 +8,13 @@ from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
 from research_copilot.cache.response_cache import response_cache
+from research_copilot.evaluation.evaluator import RAGEvaluator
 
 
 logger = get_logger("summarization_agent")
+
+evaluator = RAGEvaluator()
+
 
 
 SUMMARIZATION_PROMPT = ChatPromptTemplate.from_messages([
@@ -80,6 +85,7 @@ def summarization_agent(state: ResearchState) -> ResearchState :
     accumulated_docs = list(state.get("retrieved_docs", []))
 
     for paper_id in state["paper_ids"] :
+        # ── Cache check ───────────────────────────────────────────────
         # Check cache first
         cached = response_cache.get(
             agent="summarization",
@@ -108,12 +114,18 @@ def summarization_agent(state: ResearchState) -> ResearchState :
             accumulated_docs.extend(docs)
             context = retriever.format_context(docs)
 
+            # ── Timed LLM call ────────────────────────────────────────────
+            start_time = time.time()
+
             response = chain.invoke({
                 "paper_id": paper_id,
                 "context": context,
                 "query": state["query"],
             })
 
+            elapsed = time.time() - start_time  # computed immediately after
+
+            # ── Cache set ─────────────────────────────────────────────────
             # Cache the result before storing
             response_cache.set(
                 agent="summarization",
@@ -121,6 +133,17 @@ def summarization_agent(state: ResearchState) -> ResearchState :
                 paper_ids=[paper_id],
                 response=response.content,
                 )
+            
+            # ── Evaluation ────────────────────────────────────────────────
+            eval_result = evaluator.evaluate(
+                agent="summarization",
+                query=state["query"],
+                answer=response.content,
+                context_docs=docs,
+                paper_id=paper_id,
+                latency=elapsed,
+            )
+            logger.info("eval_result", **eval_result.to_dict())
             
             summaries[paper_id] = response.content
             logger.info("summary_complete", paper_id=paper_id[:8], chunks_used=len(docs))
