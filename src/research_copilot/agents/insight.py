@@ -5,6 +5,7 @@ from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
+from research_copilot.cache.response_cache import response_cache
 
 
 logger = get_logger("insight_agent")
@@ -79,6 +80,24 @@ def insight_agent(state: ResearchState) -> ResearchState:
     accumulated_docs = list(state.get("retrieved_docs", []))
 
     try:
+        # ── Cache check ───────────────────────────────────────────────
+        cached = response_cache.get(
+            agent="insight",
+            query=state["query"],
+            paper_ids=state["paper_ids"],
+        )
+        if cached:
+            logger.info("insight_from_cache", paper_ids_count=len(state["paper_ids"]))
+            completed = list(state.get("completed_agents", []))
+            completed.append("insight")
+            return {
+                **state,
+                "insights": [cached],
+                "completed_agents": completed,
+                "current_agent": "gap_detection",
+            }
+        
+        # ── Retrieval ─────────────────────────────────────────────────
         # Use hybrid retrieval — pull from all papers + web
         docs = retriever.retrieve_hybrid(
             query=state["query"],
@@ -100,6 +119,14 @@ def insight_agent(state: ResearchState) -> ResearchState:
             "summaries": summaries_block,
             "context": context,
         })
+
+        # ── Cache set ─────────────────────────────────────────────────
+        response_cache.set(
+            agent="insight",
+            query=state["query"],
+            paper_ids=state["paper_ids"],
+            response=response.content,
+        )
 
         # Parse response into a list of insight bullets
         raw_insights = response.content

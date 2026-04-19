@@ -6,6 +6,7 @@ from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
+from research_copilot.cache.response_cache import response_cache
 
 
 logger = get_logger("summarization_agent")
@@ -79,6 +80,18 @@ def summarization_agent(state: ResearchState) -> ResearchState :
     accumulated_docs = list(state.get("retrieved_docs", []))
 
     for paper_id in state["paper_ids"] :
+        # Check cache first
+        cached = response_cache.get(
+            agent="summarization",
+            query=state["query"],
+            paper_ids=[paper_id],
+            )
+        
+        if cached:
+            summaries[paper_id] = cached
+            logger.info("summary_from_cache", paper_id=paper_id[:8])
+            continue  # skip LLM call entirely
+
         try:
             # Retrieve chunks scoped to this paper
             docs = retriever.retrieve_from_paper(
@@ -100,6 +113,14 @@ def summarization_agent(state: ResearchState) -> ResearchState :
                 "context": context,
                 "query": state["query"],
             })
+
+            # Cache the result before storing
+            response_cache.set(
+                agent="summarization",
+                query=state["query"],
+                paper_ids=[paper_id],
+                response=response.content,
+                )
             
             summaries[paper_id] = response.content
             logger.info("summary_complete", paper_id=paper_id[:8], chunks_used=len(docs))

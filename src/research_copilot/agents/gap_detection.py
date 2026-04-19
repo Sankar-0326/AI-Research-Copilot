@@ -5,6 +5,7 @@ from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
+from research_copilot.cache.response_cache import response_cache
 
 
 logger = get_logger("gap_detection_agent")
@@ -84,6 +85,25 @@ def gap_detection_agent(state: ResearchState) -> ResearchState:
     accumulated_docs = list(state.get("retrieved_docs", []))
 
     try:
+        # ── Cache check ───────────────────────────────────────────────
+        cached = response_cache.get(
+            agent="gap_detection",
+            query=state["query"],          # raw query — not the modified one
+            paper_ids=state["paper_ids"],
+        )
+        if cached:
+            logger.info("gap_detection_from_cache", paper_ids_count=len(state["paper_ids"]))
+            completed = list(state.get("completed_agents", []))
+            completed.append("gap_detection")
+            return {
+                **state,
+                "research_gaps": [cached],
+                "future_directions": [],
+                "completed_agents": completed,
+                "current_agent": "report_assembler",
+            }
+
+        # ── Retrieval ─────────────────────────────────────────────────
         # Use more web results here — gap detection benefits from knowing
         # what the broader field looks like beyond just the uploaded papers
         docs = retriever.retrieve_hybrid(
@@ -108,6 +128,14 @@ def gap_detection_agent(state: ResearchState) -> ResearchState:
             "insights": insights_block,
             "context": context,
         })
+
+        # ── Cache set ─────────────────────────────────────────────────
+        response_cache.set(
+            agent="gap_detection",
+            query=state["query"],          # consistent with cache check above
+            paper_ids=state["paper_ids"],
+            response=response.content,
+        )
 
         # Split into gaps vs future directions
         full_response = response.content
