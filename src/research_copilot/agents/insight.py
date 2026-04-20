@@ -114,6 +114,12 @@ def insight_agent(state: ResearchState) -> ResearchState:
         accumulated_docs.extend(docs)
         context = retriever.format_context(docs)
 
+        # ── Inject MCP context if planner ran ─────────────────────────────
+        mcp_context = state.get("mcp_context", "")
+        if mcp_context:
+            context = f"{context}\n\n---\n\n## External Research Context (from MCP tools)\n{mcp_context}"
+
+
         # Format summaries as context block
         summaries_block = "\n\n".join([
             f"### Paper {pid[:8]}...\n{summary}"

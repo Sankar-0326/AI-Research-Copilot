@@ -40,6 +40,8 @@ class ResearchState(TypedDict):
     final_report: str                   # Assembled final report
     status: str                         # "running" | "complete" | "failed"
 
+    # ── MCP Layer ─────────────────────────────────────────────────────
+    mcp_context: str                    # enriched context from MCP tools
 
 def create_initial_state(
     query: str,
@@ -65,4 +67,5 @@ def create_initial_state(
         completed_agents=[],
         final_report="",
         status="running",
+        mcp_context="",
     )

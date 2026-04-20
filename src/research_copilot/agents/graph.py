@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 
 from research_copilot.agents.state import ResearchState
+from research_copilot.agents.planner import planner_agent 
 from research_copilot.agents.summarization import summarization_agent
 from research_copilot.agents.insight import insight_agent
 from research_copilot.agents.gap_detection import gap_detection_agent
@@ -109,14 +110,18 @@ def build_research_graph() -> StateGraph:
     graph = StateGraph(ResearchState)
 
     # ── Register nodes ──────────────────────────────────────────────
+    graph.add_node("planner", planner_agent)
     graph.add_node("summarization", summarization_agent)
     graph.add_node("insight", insight_agent)
     graph.add_node("gap_detection", gap_detection_agent)
     graph.add_node("report_assembler", report_assembler)
     graph.add_node("mark_failed", mark_failed) 
 
-    # ── Entry point ─────────────────────────────────────────────────
-    graph.set_entry_point("summarization")
+    # ── Entry point — planner runs first now ─────────────────────────
+    graph.set_entry_point("planner")                        
+
+    # ── Planner always continues to summarization ─────────────────────
+    graph.add_edge("planner", "summarization")              
 
     # ── Conditional edges ───────────────────────────────────────────
     graph.add_conditional_edges(
