@@ -59,7 +59,7 @@ dependencies = [
 
     # Auth + DB
     "sqlalchemy>=2.0.0",               # ORM
-    "asyncpg>=0.29.0",                 # async PostgreSQL driver
+    "asyncpg>=0.29.0",                 # async PostgreSQL driver 
     "alembic>=1.13.0",                 # DB migrations
     "python-jose[cryptography]>=3.3.0", # JWT
     "passlib[bcrypt]>=1.7.4",          # password hashing
