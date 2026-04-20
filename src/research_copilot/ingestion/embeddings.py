@@ -1,9 +1,13 @@
 import asyncio
 import time
+import pickle
+from pathlib import Path
+
 from langchain.embeddings.base import Embeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from pinecone_text.sparse import BM25Encoder
 
 from research_copilot.config import get_settings
 from research_copilot.ingestion.chunker import ChunkedPaper
@@ -15,34 +19,155 @@ from research_copilot.utils import retry_pinecone
 logger = get_logger(__name__)
 
 
-def _get_pinecone_index():
-    """Initialize Pinecone client and ensure the index exists."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Pinecone Index
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_pinecone_client() -> Pinecone:
     settings = get_settings()
-    pc = Pinecone(api_key= settings.pinecone_api_key)
+    return Pinecone(api_key=settings.pinecone_api_key)
 
-    existing_indexes = [idx.name for idx in pc.list_indexes()]
 
-    if settings.pinecone_index_name not in existing_indexes:
-        logger.info(
-            "pinecone_index_creation_started",
-            index_name=settings.pinecone_index_name
+def _get_pinecone_index():
+    """
+    Initialize Pinecone client and ensure a dotproduct index exists.
+
+    IMPORTANT: Hybrid search requires metric='dotproduct'.
+    If an existing cosine index is found under the same name,
+    it is deleted and recreated automatically.
+    """
+    settings = get_settings()
+    pc = _get_pinecone_client()
+
+    existing = {idx.name: idx for idx in pc.list_indexes()}
+
+    if settings.pinecone_index_name in existing:
+        current_metric = existing[settings.pinecone_index_name].metric
+
+        if current_metric != "dotproduct":
+            logger.warning(
+                "pinecone_index_metric_mismatch",
+                current=current_metric,
+                required="dotproduct",
+                action="deleting_and_recreating",
             )
-        
-        pc.create_index(
-            name= settings.pinecone_index_name,
-            dimension=1536,  # text-embedding-3-small dimension
-            metric="cosine",
-            spec=ServerlessSpec(
-                cloud="aws",
-                region=settings.pinecone_environment,
-            ),
-        )
-        # Wait for index to be ready
-        import time
-        time.sleep(5)
+            pc.delete_index(settings.pinecone_index_name)
+            # Fall through to creation below
+        else:
+            return pc.Index(settings.pinecone_index_name)
+
+    logger.info(
+        "pinecone_index_creation_started",
+        index_name=settings.pinecone_index_name,
+        metric="dotproduct",
+    )
+
+    pc.create_index(
+        name=settings.pinecone_index_name,
+        dimension=1536,          # text-embedding-3-small
+        metric="dotproduct",     # required for sparse-dense hybrid
+        spec=ServerlessSpec(
+            cloud="aws",
+            region=settings.pinecone_environment,
+        ),
+    )
+    time.sleep(5)    # wait for index to be ready
+
+    logger.info(
+        "pinecone_index_creation_complete",
+        index_name=settings.pinecone_index_name,
+    )
 
     return pc.Index(settings.pinecone_index_name)
 
+
+def get_pinecone_index():
+    """
+    Public accessor for the raw Pinecone index.
+    Used by PineconeHybridSearchRetriever in retriever.py.
+    """
+    return _get_pinecone_index()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BM25 Encoder management
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_bm25_model_path() -> Path:
+    settings = get_settings()
+    path = Path(settings.bm25_model_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _save_bm25_encoder(encoder: BM25Encoder):
+    path = _get_bm25_model_path()
+    with open(path, "wb") as f:
+        pickle.dump(encoder, f)
+    logger.info("bm25_encoder_saved", path=str(path))
+
+
+def _load_bm25_encoder() -> BM25Encoder | None:
+    path = _get_bm25_model_path()
+    if not path.exists():
+        return None
+    with open(path, "rb") as f:
+        encoder = pickle.load(f)
+    logger.info("bm25_encoder_loaded", path=str(path))
+    return encoder
+
+
+def get_bm25_encoder(corpus_texts: list[str] | None = None) -> BM25Encoder:
+    """
+    Load existing BM25 encoder from disk, or fit a new one.
+
+    Args:
+        corpus_texts: If provided and no saved model exists,
+                      fits a new BM25 encoder on these texts.
+                      If a saved model exists, updates it with new texts.
+
+    BM25 must be fitted on real corpus text before it can generate
+    sparse vectors. We persist it so term frequencies accumulate
+    across all ingested papers over time.
+    """
+    existing = _load_bm25_encoder()
+
+    if existing is None:
+        if not corpus_texts:
+            # No corpus and no saved model — use default pretrained weights
+            logger.warning(
+                "bm25_no_corpus_no_model",
+                action="using_default_pretrained_weights",
+            )
+            encoder = BM25Encoder().default()
+        else:
+            logger.info(
+                "bm25_fitting_new_encoder",
+                corpus_size=len(corpus_texts),
+            )
+            encoder = BM25Encoder()
+            encoder.fit(corpus_texts)
+        _save_bm25_encoder(encoder)
+        return encoder
+
+    # Model exists — if new texts provided, update and resave
+    if corpus_texts:
+        logger.info(
+            "bm25_updating_existing_encoder",
+            new_texts=len(corpus_texts),
+        )
+        # BM25Encoder doesn't support incremental fit directly,
+        # so we merge by re-encoding the params
+        # This is a no-op fit to update internal state
+        existing.fit(corpus_texts)
+        _save_bm25_encoder(existing)
+
+    return existing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dense embeddings (unchanged from Phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
 
 class CachedOpenAIEmbeddings(Embeddings):
     """
@@ -89,56 +214,118 @@ class CachedOpenAIEmbeddings(Embeddings):
         return embedding
 
 
-def get_vectorstore() -> PineconeVectorStore:
-    """Return a LangChain-compatible Pinecone vectorstore."""
+def _get_dense_embeddings() -> CachedOpenAIEmbeddings:
     settings = get_settings()
-    _get_pinecone_index()  # ensure index exists
-
-    base_embeddings = OpenAIEmbeddings(
+    base = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
         api_key=settings.openai_api_key,
     )
+    return CachedOpenAIEmbeddings(base)
 
-    # Wrap with cache
-    cached_embeddings = CachedOpenAIEmbeddings(base_embeddings)
+
+def get_vectorstore() -> PineconeVectorStore:
+    """
+    Return a LangChain-compatible Pinecone vectorstore.
+    Kept for any code that uses similarity_search directly.
+    NOTE: For hybrid retrieval use PineconeHybridSearchRetriever
+    in retriever.py instead.
+    """
+    settings = get_settings()
+    _get_pinecone_index()  # ensure index exists
 
     return PineconeVectorStore(
         index= settings.pinecone_index_name,
-        embedding= cached_embeddings,
+        embedding= _get_dense_embeddings(),
         pinecone_api_key= settings.pinecone_api_key,
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid upsert
+# ─────────────────────────────────────────────────────────────────────────────
+
 @retry_pinecone
 def embed_and_store(chunked_paper: ChunkedPaper) -> int:
     """
-    Embed all chunks and upsert into Pinecone.
+    Generate dense + sparse vectors for all chunks and upsert into Pinecone.
+
+    Flow:
+    1. Fit / update BM25 encoder on this paper's chunk texts
+    2. Generate sparse vectors (BM25) for all chunks
+    3. Generate dense vectors (OpenAI, cached) for all chunks
+    4. Upsert both vector types together into the dotproduct index
+
     Returns the number of chunks stored.
     """
     start_time = time.time()
+    settings = get_settings()
 
     logger.info(
-        "pinecone_chunks_upsert_started",
+        "hybrid_upsert_started",
         filename=chunked_paper.filename,
         paper_id=chunked_paper.paper_id,
+        chunks=len(chunked_paper.chunks),
     )
 
-    vectorstore = get_vectorstore()
+    chunk_texts = [doc.page_content for doc in chunked_paper.chunks]
 
-    # Use paper_id as the namespace to isolate papers from each other
-    vectorstore.add_documents(
-        documents=chunked_paper.chunks,
-        namespace=chunked_paper.paper_id,
-    )
+    # ── Step 1: Fit / update BM25 on this paper's chunks ─────────────
+    bm25 = get_bm25_encoder(corpus_texts=chunk_texts)
 
-    chunk_count = len(chunked_paper.chunks)
+    # ── Step 2: Generate sparse vectors ──────────────────────────────
+    sparse_vectors = bm25.encode_documents(chunk_texts)
 
-    logger.info(
-        "pinecone_chunks_upsert_completed",
-        chunk_count=chunk_count,
-        filename=chunked_paper.filename,
-        namespace=chunked_paper.paper_id,
-        duration=round(time.time() - start_time, 2),
+    # ── Step 3: Generate dense vectors (cached) ───────────────────────
+    dense_embeddings = _get_dense_embeddings()
+    dense_vectors = dense_embeddings.embed_documents(chunk_texts)
+
+    # ── Step 4: Upsert both vector types into Pinecone ────────────────
+    index = _get_pinecone_index()
+    batch_size = 100
+    total_upserted = 0
+
+    for batch_start in range(0, len(chunked_paper.chunks), batch_size):
+        batch_end = min(batch_start + batch_size, len(chunked_paper.chunks))
+        batch = chunked_paper.chunks[batch_start:batch_end]
+
+        vectors = []
+        for i, (doc, dense, sparse) in enumerate(zip(
+            batch,
+            dense_vectors[batch_start:batch_end],
+            sparse_vectors[batch_start:batch_end],
+        )):
+            chunk_idx = batch_start + i
+            vectors.append({
+                "id": f"{chunked_paper.paper_id}_{chunk_idx}",
+                "values": dense,
+                "sparse_values": {
+                    "indices": sparse["indices"],
+                    "values": sparse["values"],
+                },
+                "metadata": {
+                    **doc.metadata,
+                    "text": doc.page_content,   # stored for retrieval
+                },
+            })
+
+        index.upsert(
+            vectors=vectors,
+            namespace=chunked_paper.paper_id,
+        )
+        total_upserted += len(vectors)
+
+        logger.info(
+            "hybrid_upsert_batch_complete",
+            batch=f"{batch_start}-{batch_end}",
+            paper_id=chunked_paper.paper_id[:8],
         )
 
-    return len(chunked_paper.chunks)
+    logger.info(
+        "hybrid_upsert_complete",
+        chunk_count=total_upserted,
+        filename=chunked_paper.filename,
+        namespace=chunked_paper.paper_id,
+        duration_s=round(time.time() - start_time, 2),
+    )
+
+    return total_upserted

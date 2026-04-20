@@ -53,6 +53,20 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",   # LangChain ↔ MCP bridge
     "arxiv>=2.1.0",                    # arXiv API client
     "semanticscholar>=0.8.0",          # Semantic Scholar API
+
+    # Hybrid search
+    "pinecone-text>=0.9.0",            # BM25Encoder
+
+    # Auth + DB
+    "sqlalchemy>=2.0.0",               # ORM
+    "asyncpg>=0.29.0",                 # async PostgreSQL driver
+    "alembic>=1.13.0",                 # DB migrations
+    "python-jose[cryptography]>=3.3.0", # JWT
+    "passlib[bcrypt]>=1.7.4",          # password hashing
+    "cryptography>=42.0.0",            # Fernet key encryption
+
+    # Semantic cache
+    "faiss-cpu>=1.8.0",                # FAISS vector index
 ]
 
 [build-system]

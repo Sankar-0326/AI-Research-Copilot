@@ -28,6 +28,26 @@ class Settings(BaseSettings):
     # Tavily
     tavily_api_key: str
 
+    # Hybrid search
+    hybrid_alpha: float = 0.5
+    bm25_model_path: str = ".cache/bm25/bm25_model.pkl"
+    
+    # Database
+    database_url: str
+
+    # JWT
+    jwt_secret_key: str
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 15
+    jwt_refresh_expire_days: int = 7
+
+    # Encryption
+    fernet_master_key: str
+
+    # Semantic cache
+    semantic_cache_threshold: float = 0.95
+    semantic_cache_path: str = ".cache/semantic/"
+
 
 # @lru_cache() - ensures settings are loaded from disk only once and reused across the app — a production pattern.
 @lru_cache()
