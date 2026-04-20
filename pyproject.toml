@@ -47,6 +47,12 @@ dependencies = [
     "ragas>=0.1.0",            # RAG evaluation metrics
     "structlog>=24.1.0",       # structured logging
     "rich>=13.7.0",            # pretty console output
+
+    "mcp>=1.0.0",                      # official MCP Python SDK
+    "fastmcp>=2.0.0",                  # MCP server framework
+    "langchain-mcp-adapters>=0.1.0",   # LangChain ↔ MCP bridge
+    "arxiv>=2.1.0",                    # arXiv API client
+    "semanticscholar>=0.8.0",          # Semantic Scholar API
 ]
 
 [build-system]
