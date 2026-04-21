@@ -6,6 +6,7 @@ from research_copilot.api.routes.papers import router as papers_router
 from research_copilot.api.routes.analysis import router as analysis_router
 from research_copilot.config import get_settings
 from research_copilot.logging import setup_logging, get_logger
+from research_copilot.db import dispose_engine
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await dispose_engine()      # ← clean DB shutdown
     logger.info("Shutting down")
 
 
