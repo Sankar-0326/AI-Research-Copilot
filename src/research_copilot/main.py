@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from research_copilot.api.routes.papers import router as papers_router
 from research_copilot.api.routes.analysis import router as analysis_router
+from research_copilot.api.routes.auth import router as auth_router
 from research_copilot.config import get_settings
 from research_copilot.logging import setup_logging, get_logger
 from research_copilot.db import dispose_engine
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     # ── Routers ───────────────────────────────────────────────────────
     app.include_router(papers_router)
     app.include_router(analysis_router)
+    app.include_router(auth_router)
 
     # ── Health check ──────────────────────────────────────────────────
     @app.get("/health", tags=["System"])
