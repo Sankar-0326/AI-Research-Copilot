@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # Hybrid search
     hybrid_alpha: float = 0.5
     bm25_model_path: str = ".cache/bm25/bm25_model.pkl"
+
+    # Semantic cache
+    semantic_cache_threshold: float = 0.95
+    semantic_cache_path: str = ".cache/semantic/"
     
     # Database
     database_url: str
@@ -43,10 +47,6 @@ class Settings(BaseSettings):
 
     # Encryption
     fernet_master_key: str
-
-    # Semantic cache
-    semantic_cache_threshold: float = 0.95
-    semantic_cache_path: str = ".cache/semantic/"
 
 
 # @lru_cache() - ensures settings are loaded from disk only once and reused across the app — a production pattern.

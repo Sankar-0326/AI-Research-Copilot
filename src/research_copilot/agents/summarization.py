@@ -8,7 +8,7 @@ from research_copilot.agents.state import ResearchState
 from research_copilot.config import get_settings
 from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
-from research_copilot.cache.response_cache import response_cache
+from research_copilot.cache.semantic_cache import response_cache
 from research_copilot.evaluation.evaluator import RAGEvaluator
 from research_copilot.utils import retry_openai, timed
 
