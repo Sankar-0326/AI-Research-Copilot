@@ -3,9 +3,17 @@ from pathlib import Path
 from research_copilot.ingestion.pdf_loader import load_pdf, ParsedPaper
 from research_copilot.ingestion.chunker import chunk_paper, ChunkedPaper
 from research_copilot.ingestion.embeddings import embed_and_store
+from research_copilot.logging import get_logger
 
 
-def ingest_paper(file_path: str | Path, filename: str | None = None) -> dict:
+logger = get_logger("ingestion")
+
+
+def ingest_paper(
+        file_path: str | Path, 
+        filename: str | None = None,
+        user_context = None,
+    ) -> dict:
     """
     Full ingestion pipeline:
     PDF → parse → chunk → embed → store in Pinecone.
@@ -14,14 +22,18 @@ def ingest_paper(file_path: str | Path, filename: str | None = None) -> dict:
     """
     # Stage 1: Parse
     parsed = load_pdf(file_path= file_path, filename= filename)
-    print(f"--- Parsed '{parsed.filename}' — {parsed.page_count} pages ---")
+    logger.info(
+        "pdf_parsed",
+        filename=parsed.filename,
+        pages=parsed.page_count,
+    )
 
     # Stage 2: Chunk
     chunked = chunk_paper(parsed_paper= parsed)
-    print(f"--- Created {len(chunked.chunks)} chunks ---")
+    logger.info("chunks_created", count=len(chunked.chunks))
 
     # Stage 3: Embed + Store
-    stored_count = embed_and_store(chunked)
+    stored_count = embed_and_store(chunked, user_context=user_context)
 
     return {
         "paper_id": parsed.paper_id,

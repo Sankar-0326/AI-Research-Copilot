@@ -43,10 +43,14 @@ class ResearchState(TypedDict):
     # ── MCP Layer ─────────────────────────────────────────────────────
     mcp_context: str                    # enriched context from MCP tools
 
+    # ── User context ───────────────────────────────────────────────────
+user_context: Any     # UserContext — carries per-user API keys
+
 def create_initial_state(
     query: str,
     paper_ids: list[str],
     retrieval_mode: str = "cross",
+    user_context = None,          
 ) -> ResearchState:
     """
     Create a fully initialized ResearchState with safe defaults.
@@ -67,5 +71,6 @@ def create_initial_state(
         completed_agents=[],
         final_report="",
         status="running",
+        user_context=user_context,
         mcp_context="",
     )

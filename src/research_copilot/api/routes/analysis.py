@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 
 from research_copilot.agents import run_research_pipeline
 from research_copilot.api.schemas import (
@@ -12,13 +12,22 @@ from research_copilot.api.schemas import (
     PipelineStatus,
 )
 from research_copilot.api.job_store import job_store
+from research_copilot.api.user_context import UserContext
+from research_copilot.auth.dependencies import get_current_user, require_api_keys
+from research_copilot.db.models.user import User
+from research_copilot.logging import get_logger
 
+logger = get_logger("routes.analysis")
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
 
 # ── Background task ───────────────────────────────────────────────────
 
-def _run_pipeline_task(job_id: str, request: AnalyzeRequest):
+def _run_pipeline_task(
+    job_id: str,
+    request: AnalyzeRequest,
+    user_context: UserContext,          # ← per-user keys injected here
+):
     """
     Runs in a background thread via FastAPI's BackgroundTasks.
     Updates job store on completion or failure.
@@ -29,6 +38,7 @@ def _run_pipeline_task(job_id: str, request: AnalyzeRequest):
             query=request.query,
             paper_ids=request.paper_ids,
             retrieval_mode=request.retrieval_mode.value,
+            user_context=user_context,  # ← passed into pipeline
         )
 
         if final_state.get("status") == "failed":
@@ -40,6 +50,7 @@ def _run_pipeline_task(job_id: str, request: AnalyzeRequest):
             job_store.update_result(job_id, final_state)
 
     except Exception as e:
+        logger.error("pipeline_task_failed", job_id=job_id, error=str(e))
         job_store.update_error(job_id, error=str(e))
 
 
@@ -51,25 +62,46 @@ def _run_pipeline_task(job_id: str, request: AnalyzeRequest):
     status_code=202,
     summary="Trigger multi-agent analysis on uploaded papers",
 )
-async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
+async def analyze(
+    request: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),         # ← auth required
+    keys: dict = Depends(require_api_keys),         # ← keys required
+):
     """
-    Start an async analysis job.
-
+    Start an async analysis job using the authenticated user's API keys.
     Returns a job_id immediately.
     Poll GET /analysis/report/{job_id} for results.
     """
+    # Build UserContext from decrypted keys
+    user_context = UserContext.from_api_keys(
+        user_id=str(user.id),
+        keys=keys,
+    )
+
     job = job_store.create(
         query=request.query,
         paper_ids=request.paper_ids,
     )
 
-    # Fire and forget — runs in background thread
-    background_tasks.add_task(_run_pipeline_task, job.job_id, request)
+    background_tasks.add_task(
+        _run_pipeline_task,
+        job.job_id,
+        request,
+        user_context,                               # ← passed to background task
+    )
+
+    logger.info(
+        "analysis_job_created",
+        job_id=job.job_id,
+        user_id=str(user.id)[:8],
+        papers=len(request.paper_ids),
+    )
 
     return AnalyzeResponse(
         job_id=job.job_id,
         status=PipelineStatus.pending,
-        message="Analysis started. Poll /analysis/report/{job_id} for results.",
+        message=f"Analysis started. Poll /analysis/report/{job.job_id} for results.",
     )
 
 
@@ -78,14 +110,10 @@ async def analyze(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     response_model=FullReportResponse,
     summary="Get full analysis report for a job",
 )
-async def get_report(job_id: str):
-    """
-    Fetch the full analysis report once the job is complete.
-
-    - If status is 'pending' or 'running', returns 202 with current status
-    - If status is 'failed', returns 500 with error details
-    - If status is 'complete', returns the full report
-    """
+async def get_report(
+    job_id: str,
+    user: User = Depends(get_current_user),         # ← auth required
+):
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
@@ -121,10 +149,13 @@ async def get_report(job_id: str):
 @router.get(
     "/summary/{paper_id}",
     response_model=SummaryResponse,
-    summary="Get summary for a specific paper from the latest job",
+    summary="Get summary for a specific paper from a job",
 )
-async def get_summary(paper_id: str, job_id: str):
-    """Get the summary for one specific paper from a completed job."""
+async def get_summary(
+    paper_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),         # ← auth required
+):
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -154,7 +185,10 @@ async def get_summary(paper_id: str, job_id: str):
     response_model=InsightsResponse,
     summary="Get cross-paper insights from a completed job",
 )
-async def get_insights(job_id: str):
+async def get_insights(
+    job_id: str,
+    user: User = Depends(get_current_user),         # ← auth required
+):
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -173,7 +207,10 @@ async def get_insights(job_id: str):
     response_model=ResearchGapsResponse,
     summary="Get research gaps and future directions from a completed job",
 )
-async def get_gaps(job_id: str):
+async def get_gaps(
+    job_id: str,
+    user: User = Depends(get_current_user),         # ← auth required
+):
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")

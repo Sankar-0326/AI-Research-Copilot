@@ -245,7 +245,7 @@ def get_vectorstore() -> PineconeVectorStore:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @retry_pinecone
-def embed_and_store(chunked_paper: ChunkedPaper) -> int:
+def embed_and_store(chunked_paper: ChunkedPaper, user_context = None) -> int:
     """
     Generate dense + sparse vectors for all chunks and upsert into Pinecone.
 
@@ -276,7 +276,17 @@ def embed_and_store(chunked_paper: ChunkedPaper) -> int:
     sparse_vectors = bm25.encode_documents(chunk_texts)
 
     # ── Step 3: Generate dense vectors (cached) ───────────────────────
-    dense_embeddings = _get_dense_embeddings()
+    # ── Use per-user OpenAI key if available ──────────────────────────
+    if user_context and user_context.openai_api_key:
+        from langchain_openai import OpenAIEmbeddings
+        from research_copilot.ingestion.embeddings import CachedOpenAIEmbeddings
+        base = OpenAIEmbeddings(
+            model=settings.openai_embedding_model,
+            api_key=user_context.openai_api_key,    # ← per-user key
+        )
+        dense_embeddings = CachedOpenAIEmbeddings(base)
+    else:
+        dense_embeddings = _get_dense_embeddings()  # ← fallback to .env
     dense_vectors = dense_embeddings.embed_documents(chunk_texts)
 
     # ── Step 4: Upsert both vector types into Pinecone ────────────────
