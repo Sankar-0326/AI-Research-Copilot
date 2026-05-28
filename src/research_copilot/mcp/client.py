@@ -37,18 +37,20 @@ class ResearchMCPClient:
         }
 
     async def _load_tools(self) -> list[BaseTool]:
-        """Lazily load tools from the MCP server."""
+        """Load tools from MCP server using the new 0.1.0 API."""
         if self._tools is not None:
             return self._tools
 
-        async with MultiServerMCPClient(self._get_server_config()) as client:
-            self._tools = client.get_tools()
-            self._tool_map = {tool.name: tool for tool in self._tools}
-            logger.info(
-                "mcp_tools_loaded",
-                count=len(self._tools),
-                tools=[t.name for t in self._tools],
-            )
+        # New API — no context manager, direct instantiation
+        client = MultiServerMCPClient(self._get_server_config())
+        self._tools = await client.get_tools()
+        self._tool_map = {tool.name: tool for tool in self._tools}
+
+        logger.info(
+            "mcp_tools_loaded",
+            count=len(self._tools),
+            tools=[t.name for t in self._tools],
+        )
         return self._tools
 
     def get_available_tools(self) -> list[dict]:
