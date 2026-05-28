@@ -25,6 +25,19 @@ def run_research_pipeline(
         user_context=user_context,
     )
 
+    # ── Diagnostic — confirms keys are reaching the pipeline ──────────
+    if user_context:
+        logger.info(
+            "pipeline_user_context",
+            user_id=user_context.user_id[:8],
+            has_openai=bool(user_context.openai_api_key),
+            has_pinecone=bool(user_context.pinecone_api_key),
+            has_tavily=bool(user_context.tavily_api_key),
+            openai_hint=user_context.openai_api_key[-4:] if user_context.openai_api_key else "EMPTY",
+        )
+    else:
+        logger.error("pipeline_no_user_context")
+        
     logger.info(
         "pipeline_starting",
         query=query[:60],

@@ -175,10 +175,19 @@ def summarization_agent(state: ResearchState) -> ResearchState :
     All papers run concurrently via asyncio.gather.
     """
     settings = get_settings()
-    retriever = get_retriever()
+    user_context = state.get("user_context")
+    retriever = get_retriever(
+        pinecone_api_key=user_context.pinecone_api_key if user_context and user_context.pinecone_api_key else settings.pinecone_api_key,
+        tavily_api_key=user_context.tavily_api_key if user_context and user_context.tavily_api_key else settings.tavily_api_key
+    )
+    openai_key = (
+        user_context.openai_api_key
+        if user_context and user_context.openai_api_key
+        else settings.openai_api_key
+    )
     llm = ChatOpenAI(
         model= settings.openai_model,
-        api_key= settings.openai_api_key,
+        api_key= openai_key,
         temperature= 0.1,  # low temp for factual summarization
     )
 

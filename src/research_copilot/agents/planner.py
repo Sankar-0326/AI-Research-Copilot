@@ -71,9 +71,15 @@ def planner_agent(state: ResearchState) -> ResearchState:
     mcp_client = get_mcp_client()
     errors = list(state.get("errors", []))
 
+    user_context = state.get("user_context")
+    openai_key = (
+        user_context.openai_api_key
+        if user_context and user_context.openai_api_key
+        else settings.openai_api_key
+    )
     llm = ChatOpenAI(
         model=settings.openai_model,
-        api_key=settings.openai_api_key,
+        api_key=openai_key,
         temperature=0,   # deterministic planning
     )
 
@@ -104,20 +110,22 @@ def planner_agent(state: ResearchState) -> ResearchState:
 
         # Parse the tool call plan
         try:
-            tool_calls = json.loads(response.content)
+            raw = response.content.strip()
+            # Strip markdown code fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            tool_calls = json.loads(raw)
             if not isinstance(tool_calls, list):
                 tool_calls = []
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, IndexError):
             logger.warning(
                 "planner_parse_failed",
                 raw_response=response.content[:200],
             )
             tool_calls = []
-
-        logger.info(
-            "planner_plan_created",
-            tool_calls=[c["tool"] for c in tool_calls],
-        )
 
         if not tool_calls:
             logger.info("planner_no_tools_needed")
