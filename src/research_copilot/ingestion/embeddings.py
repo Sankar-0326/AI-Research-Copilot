@@ -16,6 +16,19 @@ from research_copilot.cache.embedding_cache import embedding_cache
 from research_copilot.utils import retry_pinecone
 
 
+import nltk
+
+def _ensure_nltk_data():
+    """Download required NLTK data for BM25Encoder if not present."""
+    for package in ['punkt_tab', 'stopwords']:
+        try:
+            nltk.data.find(f'tokenizers/{package}')
+        except LookupError:
+            nltk.download(package, quiet=True)
+
+_ensure_nltk_data()  # runs once at import time
+
+
 logger = get_logger(__name__)
 
 
@@ -88,6 +101,30 @@ def get_pinecone_index():
     """
     return _get_pinecone_index()
 
+
+def _get_pinecone_index_with_key(api_key: str):
+    """
+    Get Pinecone index using a specific API key.
+    Used when user_context provides a per-user Pinecone key.
+    """
+    settings = get_settings()
+    pc = Pinecone(api_key=api_key)
+
+    existing = {idx.name: idx for idx in pc.list_indexes()}
+
+    if settings.pinecone_index_name not in existing:
+        pc.create_index(
+            name=settings.pinecone_index_name,
+            dimension=1536,
+            metric="dotproduct",
+            spec=ServerlessSpec(
+                cloud="aws",
+                region=settings.pinecone_environment,
+            ),
+        )
+        time.sleep(5)
+
+    return pc.Index(settings.pinecone_index_name)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BM25 Encoder management
@@ -194,24 +231,69 @@ class CachedOpenAIEmbeddings(Embeddings):
 
         # Batch embed only uncached texts
         if uncached_texts:
-            new_embeddings = self._base.embed_documents(uncached_texts)
+            # ── Batch in smaller groups to avoid rate limits ──────────────
+            batch_size = 20   # ← was sending all at once, now 20 at a time
+            new_embeddings = []
+
+            for batch_start in range(0, len(uncached_texts), batch_size):
+                batch = uncached_texts[batch_start:batch_start + batch_size]
+
+                # Retry with exponential backoff on 429
+                for attempt in range(5):
+                    try:
+                        batch_result = self._base.embed_documents(batch)
+                        new_embeddings.extend(batch_result)
+                        break
+                    except Exception as e:
+                        if "429" in str(e) or "rate limit" in str(e).lower():
+                            wait = (2 ** attempt) + 1   # 2s, 3s, 5s, 9s, 17s
+                            logger.warning(
+                                "openai_rate_limit_hit",
+                                attempt=attempt + 1,
+                                wait_seconds=wait,
+                                batch=f"{batch_start}-{batch_start + len(batch)}",
+                            )
+                            time.sleep(wait)
+                        else:
+                            raise   # non-rate-limit error — re-raise immediately
+
             for text, embedding, idx in zip(
                 uncached_texts, new_embeddings, uncached_indices
             ):
                 embedding_cache.set(text, embedding)
                 results.append((idx, embedding))
 
-        # Return in original order
         results.sort(key=lambda x: x[0])
         return [emb for _, emb in results]
+    
 
     def embed_query(self, text: str) -> list[float]:
+        """
+        Embed a single query string with caching + retry.
+        Used by the retriever at search time.
+        """
         cached = embedding_cache.get(text)
         if cached is not None:
             return cached
-        embedding = self._base.embed_query(text)
-        embedding_cache.set(text, embedding)
-        return embedding
+
+        for attempt in range(5):
+            try:
+                embedding = self._base.embed_query(text)
+                embedding_cache.set(text, embedding)
+                return embedding
+            except Exception as e:
+                if "429" in str(e) or "rate limit" in str(e).lower():
+                    wait = (2 ** attempt) + 1
+                    logger.warning(
+                        "openai_rate_limit_embed_query",
+                        attempt=attempt + 1,
+                        wait_seconds=wait,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
+
+        raise RuntimeError("embed_query failed after 5 attempts due to rate limiting.")
 
 
 def _get_dense_embeddings() -> CachedOpenAIEmbeddings:
@@ -244,7 +326,7 @@ def get_vectorstore() -> PineconeVectorStore:
 # Hybrid upsert
 # ─────────────────────────────────────────────────────────────────────────────
 
-@retry_pinecone
+
 def embed_and_store(chunked_paper: ChunkedPaper, user_context = None) -> int:
     """
     Generate dense + sparse vectors for all chunks and upsert into Pinecone.
@@ -288,9 +370,16 @@ def embed_and_store(chunked_paper: ChunkedPaper, user_context = None) -> int:
     else:
         dense_embeddings = _get_dense_embeddings()  # ← fallback to .env
     dense_vectors = dense_embeddings.embed_documents(chunk_texts)
+    time.sleep(0.5)
 
     # ── Step 4: Upsert both vector types into Pinecone ────────────────
-    index = _get_pinecone_index()
+    # ── Step 4: Upsert both vector types into Pinecone ────────────────
+    # Use per-user Pinecone key if available, else fall back to .env
+    if user_context and user_context.pinecone_api_key:
+        index = _get_pinecone_index_with_key(user_context.pinecone_api_key)
+        logger.info("using_user_pinecone_key", user_id=user_context.user_id[:8])
+    else:
+        index = _get_pinecone_index()
     batch_size = 100
     total_upserted = 0
 
@@ -314,16 +403,33 @@ def embed_and_store(chunked_paper: ChunkedPaper, user_context = None) -> int:
                 },
                 "metadata": {
                     **doc.metadata,
-                    "text": doc.page_content,   # stored for retrieval
+                    "context": doc.page_content,   # stored for retrieval
                 },
             })
 
-        index.upsert(
-            vectors=vectors,
-            namespace=chunked_paper.paper_id,
-        )
-        total_upserted += len(vectors)
+        # ── Retry upsert per batch only ───────────────────────────────
+        for attempt in range(4):
+            try:
+                index.upsert(
+                    vectors=vectors,
+                    namespace=chunked_paper.paper_id,
+                )
+                break
+            except Exception as e:
+                if attempt == 3:
+                    raise
+                wait = (2 ** attempt) + 1
+                logger.warning(
+                    "pinecone_upsert_retry",
+                    attempt=attempt + 1,
+                    wait_seconds=wait,
+                    batch=f"{batch_start}-{batch_end}",
+                    error=str(e),
+                )
+                time.sleep(wait)
 
+        total_upserted += len(vectors)
+        
         logger.info(
             "hybrid_upsert_batch_complete",
             batch=f"{batch_start}-{batch_end}",
