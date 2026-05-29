@@ -53,7 +53,7 @@ class RAGEvaluator:
         settings = get_settings()
         # Use mini model for eval — cheaper, fast enough for scoring
         self._llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model=settings.openai_model,
             api_key=settings.openai_api_key,
             temperature=0,
         )
