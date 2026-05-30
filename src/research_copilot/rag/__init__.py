@@ -4,11 +4,24 @@ from research_copilot.rag.retriever import ResearchRetriever
 _retriever: ResearchRetriever | None = None
 
 
-def get_retriever() -> ResearchRetriever:
-    """Return the shared retriever instance (lazy init)."""
+def get_retriever(
+        pinecone_api_key: str | None = None,
+        tavily_api_key: str | None = None,
+        ) -> ResearchRetriever:
+    """
+    Return retriever instance.
+    If a per-user key is provided, always build a fresh instance.
+    If using global .env key, return the cached singleton.
+    """
     global _retriever
+
+    if pinecone_api_key:
+        # Per-user — never cache, always fresh
+        return ResearchRetriever(pinecone_api_key=pinecone_api_key, tavily_api_key=tavily_api_key)
+
     if _retriever is None:
         _retriever = ResearchRetriever()
+
     return _retriever
 
 

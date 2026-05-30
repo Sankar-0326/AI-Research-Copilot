@@ -5,11 +5,6 @@ from langchain_tavily import TavilySearch
 from langchain_community.retrievers import PineconeHybridSearchRetriever
 
 from research_copilot.config import get_settings
-from research_copilot.ingestion.embeddings import (
-    get_pinecone_index,
-    get_bm25_encoder,
-    _get_dense_embeddings,
-)
 from research_copilot.logging import get_logger
 
 
@@ -25,10 +20,12 @@ class ResearchRetriever:
     - Combined hybrid retrieval (vector + web)
     """
 
-    def __init__(self):
+    def __init__(self, pinecone_api_key: str | None = None, tavily_api_key: str | None = None,):
         self.settings = get_settings()
         self._tavily = None     # lazy init
         self._retriever = None  # lazy init — built on first retrieval call
+        self._pinecone_key = pinecone_api_key
+        self._tavily_key = tavily_api_key
 
     def _get_hybrid_retriever(self) -> PineconeHybridSearchRetriever:
         """
@@ -36,27 +33,44 @@ class ResearchRetriever:
         Called on first retrieval — not in __init__ — so startup
         doesn't pay the Pinecone + BM25 init cost if retriever
         is never used in that process.
+        Build retriever using provided key or fall back to global settings.
         """
-        if self._retriever is not None:
+        if self._retriever is not None and not self._pinecone_key:
             return self._retriever
 
-        index = get_pinecone_index()
-        bm25 = get_bm25_encoder()           # loads saved model from disk
-        embeddings = _get_dense_embeddings() # cached OpenAI embeddings
+        from research_copilot.ingestion.embeddings import (
+            get_pinecone_index,
+            _get_pinecone_index_with_key,
+            get_bm25_encoder,
+            _get_dense_embeddings,
+        )
 
-        self._retriever = PineconeHybridSearchRetriever(
+        settings = get_settings()
+        index = (
+            _get_pinecone_index_with_key(self._pinecone_key)
+            if self._pinecone_key
+            else get_pinecone_index()
+        )
+        bm25 = get_bm25_encoder()
+        embeddings = _get_dense_embeddings()
+
+        retriever = PineconeHybridSearchRetriever(
             index=index,
             sparse_encoder=bm25,
             embeddings=embeddings,
-            alpha=self.settings.hybrid_alpha,   # 0.5 = balanced by default
+            alpha=settings.hybrid_alpha,
         )
 
         logger.info(
             "hybrid_retriever_initialized",
-            alpha=self.settings.hybrid_alpha,
+            alpha=settings.hybrid_alpha,
+            key_source="user" if self._pinecone_key else "env",
         )
 
-        return self._retriever
+        if not self._pinecone_key:
+            self._retriever = retriever
+
+        return retriever
 
     # ------------------------------------------------------------------
     # Core retrieval methods
@@ -72,15 +86,15 @@ class ResearchRetriever:
         Retrieve chunks scoped to a single paper via its Pinecone namespace.
         Uses hybrid BM25 + dense retrieval.
         """
-        k = top_k or self.settings.retrieval_top_k
+        k = top_k if top_k else self.settings.retrieval_top_k
         retriever = self._get_hybrid_retriever()
 
+        # ── Set per-call params as attributes — not as invoke() kwargs ────
+        retriever.top_k = k
+        retriever.namespace = paper_id
+
         # PineconeHybridSearchRetriever accepts namespace at call time
-        results = retriever.invoke(
-            query,
-            top_k=k,
-            namespace=paper_id,
-        )
+        results = retriever.invoke(query)
 
         logger.info(
             "retrieve_from_paper",
@@ -101,14 +115,15 @@ class ResearchRetriever:
         Used by Insight Agent and Gap Detection Agent.
         Uses hybrid BM25 + dense retrieval.
         """
-        k = top_k or self.settings.retrieval_top_k
+        k = top_k if top_k else self.settings.retrieval_top_k
         retriever = self._get_hybrid_retriever()
 
+        # ── Clear namespace for cross-paper search ────────────────────────
+        retriever.top_k = k
+        retriever.namespace = ""    # empty string = no namespace filter
+
         # No namespace = search across all papers
-        results = retriever.invoke(
-            query,
-            top_k=k,
-        )
+        results = retriever.invoke(query)
 
         logger.info(
             "retrieve_cross_paper",
@@ -129,7 +144,7 @@ class ResearchRetriever:
         """
         if self._tavily is None:
             self._tavily = TavilySearch(
-                tavily_api_key= self.settings.tavily_api_key,
+                tavily_api_key= self._tavily_key,
                 max_results= max_results,
                 )
             
@@ -164,14 +179,15 @@ class ResearchRetriever:
         Returns vector results first, web results appended.
         """
         # ── Vector side (now hybrid BM25 + dense) ────────────────────
+        k = top_k if top_k else self.settings.retrieval_top_k
         if paper_ids:
             vector_docs = []
             for pid in paper_ids :
                 vector_docs.extend(
-                    self.retrieve_from_paper(query, pid, top_k= top_k)
+                    self.retrieve_from_paper(query, pid, top_k= k)
                 )
         else:
-            vector_docs = self.retrieve_cross_paper(query, top_k= top_k)
+            vector_docs = self.retrieve_cross_paper(query, top_k= k)
 
         # ── Web side ──────────────────────────────────────────────────
         web_docs = self.retrieve_from_web(query, max_results= web_results)
