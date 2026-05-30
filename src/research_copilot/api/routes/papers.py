@@ -10,6 +10,8 @@ from research_copilot.auth.dependencies import get_current_user, require_api_key
 from research_copilot.db.models.user import User
 from research_copilot.logging import get_logger
 
+from research_copilot.ingestion.embeddings import _get_pinecone_index_with_key
+
 logger = get_logger("routes.papers")
 router = APIRouter(prefix="/papers", tags=["Papers"])
 
@@ -89,6 +91,13 @@ async def upload_paper(
         raise HTTPException(status_code=422, detail=str(e))
 
     except Exception as e:
+        # ── Log full traceback so we can see exactly what's failing ───
+        import traceback
+        logger.error(
+            "ingestion_failed",
+            error=str(e),
+            traceback=traceback.format_exc(),
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Ingestion failed: {str(e)}",
@@ -96,3 +105,38 @@ async def upload_paper(
 
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+@router.get(
+    "/list",
+    summary="List all paper namespaces stored in Pinecone for this user",
+)
+async def list_papers(
+    user: User = Depends(get_current_user),
+    keys: dict = Depends(require_api_keys),
+):
+    """
+    Queries Pinecone describe_index_stats() to get all existing namespaces.
+    Each namespace IS a paper_id — this is the source of truth.
+    """
+    try:
+        pinecone_key = keys.get("pinecone")
+        if not pinecone_key:
+            raise HTTPException(status_code=400, detail="Pinecone key not set.")
+
+        index = _get_pinecone_index_with_key(pinecone_key)
+        stats = index.describe_index_stats()
+
+        namespaces = [
+            {
+                "id": ns_id,
+                "name": ns_id[:16] + "...",
+                "vector_count": ns_data.get("vector_count", 0),
+            }
+            for ns_id, ns_data in stats.get("namespaces", {}).items()
+        ]
+
+        return {"namespaces": namespaces}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list papers: {str(e)}")
