@@ -127,14 +127,29 @@ async def list_papers(
         index = _get_pinecone_index_with_key(pinecone_key)
         stats = index.describe_index_stats()
 
-        namespaces = [
-            {
+        namespaces = []
+        for ns_id, ns_data in stats.get("namespaces", {}).items():
+            filename = None
+            try:
+                # Fetch first chunk to read filename from metadata
+                fetch_result = index.fetch(
+                    ids=[f"{ns_id}_0"],
+                    namespace=ns_id,
+                )
+                
+                vectors = fetch_result.vectors
+                
+                if vectors:
+                    first_vec = next(iter(vectors.values()))
+                    filename = first_vec.metadata.get("source") 
+            except Exception:
+                pass
+
+            namespaces.append({
                 "id": ns_id,
-                "name": ns_id[:16] + "...",
+                "name": filename if filename else f"Paper ({ns_id[:8]}...)",
                 "vector_count": ns_data.get("vector_count", 0),
-            }
-            for ns_id, ns_data in stats.get("namespaces", {}).items()
-        ]
+            })
 
         return {"namespaces": namespaces}
 

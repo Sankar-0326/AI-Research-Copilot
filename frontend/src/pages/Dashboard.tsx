@@ -85,7 +85,7 @@ export default function Dashboard() {
               .map(n => ({
                 id: n.id,
                 // Use saved friendly name if available, else show truncated ID
-                name: friendlyNames[n.id] || `Paper (${n.id.slice(0, 8)}...)`,
+                name: friendlyNames[n.id] || n.name ,
               }))
             return [...prev, ...newFromPinecone]
           })
