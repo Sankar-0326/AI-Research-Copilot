@@ -1,3 +1,23 @@
+import sys
+import logging
+
+# ── CRITICAL: redirect all output to stderr ────────────────────────────────
+# MCP stdio transport reserves stdout for JSON-RPC protocol.
+# Any non-JSON bytes written to stdout corrupts the message stream.
+logging.basicConfig(level=logging.ERROR, stream=sys.stderr, force=True)
+
+# Redirect structlog to stderr too
+import structlog
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer(colors=False),
+    ],
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    cache_logger_on_first_use=False,
+)
+
 from fastmcp import FastMCP
 from research_copilot.mcp.tools.arxiv_search import search_arxiv
 from research_copilot.mcp.tools.citations import get_citations, format_citation_graph
@@ -38,9 +58,13 @@ def get_paper_citations(paper_title: str, limit: int = 10) -> str:
     Returns papers that cite this work AND papers this work references.
     Use this to understand a paper's influence and its intellectual foundations.
 
+    IMPORTANT: Use paper_title with the ACTUAL PAPER TITLE (e.g. "Attention Is All You Need").
+    Do NOT pass a hash ID as paper_title. If you only have a hash ID, call
+    search_papers first to find the actual title.
+
     Args:
-        paper_title: Full or partial title of the paper
-        limit:       Max citations/references to return
+        paper_title: Actual title of the paper, NOT a hash or namespace ID
+        limit: Max citations/references to return
     """
     logger.info("mcp_tool_called", tool="get_paper_citations", paper=paper_title[:50])
     citation_data = get_citations(paper_title=paper_title, limit=limit)

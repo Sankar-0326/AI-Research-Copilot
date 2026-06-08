@@ -26,7 +26,9 @@ PLANNER_PROMPT = ChatPromptTemplate.from_messages([
         Rules:
         - Only select tools that are genuinely useful for this specific query
         - Do not call a tool if the query doesn't require it
-        - For citation lookups, use paper titles from the uploaded papers list
+        - For get_paper_citations, always use paper_title with the ACTUAL TITLE of the paper
+          (e.g. "Attention Is All You Need"), NEVER a hash ID like "80b9f349564a7f42"
+          If you only have a hash ID, use search_papers first to discover the title
         - For trend analysis, extract the core topic from the query
         - Prefer focused queries over broad ones
 

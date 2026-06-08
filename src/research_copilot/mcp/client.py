@@ -33,6 +33,10 @@ class ResearchMCPClient:
                 "command": "python",
                 "args": ["-m", "research_copilot.mcp.server"],
                 "transport": "stdio",
+                "env": {
+                **__import__('os').environ.copy(),
+                "FASTMCP_LOG_LEVEL": "ERROR",   # suppress FastMCP internal logs
+            },
             }
         }
 
