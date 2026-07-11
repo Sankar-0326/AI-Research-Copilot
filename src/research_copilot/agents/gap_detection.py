@@ -7,6 +7,7 @@ from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
 from research_copilot.cache.semantic_cache import response_cache
 from research_copilot.utils import retry_openai, timed
+from research_copilot.api.user_context import get_user_context
 
 
 logger = get_logger("gap_detection_agent")
@@ -79,7 +80,7 @@ def gap_detection_agent(state: ResearchState) -> ResearchState:
     - Identifies gaps, unanswered questions, future directions
     """
     settings = get_settings()
-    user_context = state.get("user_context")
+    user_context = get_user_context()
     retriever = get_retriever(
         pinecone_api_key=user_context.pinecone_api_key if user_context and user_context.pinecone_api_key else settings.pinecone_api_key,
         tavily_api_key=user_context.tavily_api_key if user_context and user_context.tavily_api_key else settings.tavily_api_key

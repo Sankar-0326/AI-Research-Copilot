@@ -7,6 +7,7 @@ from research_copilot.config import get_settings
 from research_copilot.mcp import get_mcp_client
 from research_copilot.logging import get_logger
 from research_copilot.utils import retry_openai, timed
+from research_copilot.api.user_context import get_user_context
 
 
 logger = get_logger("planner_agent")
@@ -73,7 +74,7 @@ def planner_agent(state: ResearchState) -> ResearchState:
     mcp_client = get_mcp_client()
     errors = list(state.get("errors", []))
 
-    user_context = state.get("user_context")
+    user_context = get_user_context()
     openai_key = (
         user_context.openai_api_key
         if user_context and user_context.openai_api_key

@@ -43,8 +43,7 @@ class ResearchState(TypedDict):
     # ── MCP Layer ─────────────────────────────────────────────────────
     mcp_context: str                    # enriched context from MCP tools
 
-    # ── User context ───────────────────────────────────────────────────
-user_context: Any     # UserContext — carries per-user API keys
+    # User Context removed — keys never travel through serializable state and expose in langsmith trace
 
 def create_initial_state(
     query: str,
@@ -71,6 +70,5 @@ def create_initial_state(
         completed_agents=[],
         final_report="",
         status="running",
-        user_context=user_context,
         mcp_context="",
     )

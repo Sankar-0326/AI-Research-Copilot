@@ -16,6 +16,8 @@ from research_copilot.api.user_context import UserContext
 from research_copilot.auth.dependencies import get_current_user, require_api_keys
 from research_copilot.db.models.user import User
 from research_copilot.logging import get_logger
+from research_copilot.api.user_context import UserContext, set_user_context
+
 
 logger = get_logger("routes.analysis")
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -32,13 +34,16 @@ def _run_pipeline_task(
     Runs in a background thread via FastAPI's BackgroundTasks.
     Updates job store on completion or failure.
     """
+    # ── Set keys in contextvar — visible to all agents in this thread ──
+    set_user_context(user_context)
+
     job_store.update_status(job_id, PipelineStatus.running)
     try:
         final_state = run_research_pipeline(
             query=request.query,
             paper_ids=request.paper_ids,
             retrieval_mode=request.retrieval_mode.value,
-            user_context=user_context,  # ← passed into pipeline
+            # ← no user_context argument — read via contextvar inside pipeline
         )
 
         if final_state.get("status") == "failed":

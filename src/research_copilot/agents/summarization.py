@@ -11,6 +11,7 @@ from research_copilot.logging import get_logger
 from research_copilot.cache.semantic_cache import response_cache
 from research_copilot.evaluation.evaluator import RAGEvaluator
 from research_copilot.utils import retry_openai, timed
+from research_copilot.api.user_context import get_user_context
 
 
 logger = get_logger("summarization_agent")
@@ -175,7 +176,7 @@ def summarization_agent(state: ResearchState) -> ResearchState :
     All papers run concurrently via asyncio.gather.
     """
     settings = get_settings()
-    user_context = state.get("user_context")
+    user_context = get_user_context()
     retriever = get_retriever(
         pinecone_api_key=user_context.pinecone_api_key if user_context and user_context.pinecone_api_key else settings.pinecone_api_key,
         tavily_api_key=user_context.tavily_api_key if user_context and user_context.tavily_api_key else settings.tavily_api_key

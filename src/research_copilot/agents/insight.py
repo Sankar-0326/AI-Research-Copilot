@@ -7,6 +7,7 @@ from research_copilot.rag import get_retriever
 from research_copilot.logging import get_logger
 from research_copilot.cache.semantic_cache import response_cache
 from research_copilot.utils import retry_openai, timed
+from research_copilot.api.user_context import get_user_context
 
 
 logger = get_logger("insight_agent")
@@ -74,7 +75,7 @@ def insight_agent(state: ResearchState) -> ResearchState:
     - Generate
     """
     settings = get_settings()
-    user_context = state.get("user_context")
+    user_context = get_user_context()
     openai_key = (
         user_context.openai_api_key
         if user_context and user_context.openai_api_key

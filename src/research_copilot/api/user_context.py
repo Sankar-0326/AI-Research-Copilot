@@ -45,3 +45,20 @@ class UserContext:
             pinecone_api_key=settings.pinecone_api_key,
             tavily_api_key=settings.tavily_api_key,
         )
+    
+
+from contextvars import ContextVar
+
+# Module-level context var — never serialized, invisible to LangSmith
+_user_context_var: ContextVar['UserContext | None'] = ContextVar(
+    'user_context',
+    default=None,
+)
+
+def set_user_context(ctx: 'UserContext') -> None:
+    """Call this in the route handler before adding background task."""
+    _user_context_var.set(ctx)
+
+def get_user_context() -> 'UserContext | None':
+    """Call this in any agent to get the current user's keys."""
+    return _user_context_var.get()
