@@ -16,7 +16,7 @@ from research_copilot.api.user_context import get_user_context
 
 logger = get_logger("summarization_agent")
 
-evaluator = RAGEvaluator()
+
 
 
 SUMMARIZATION_PROMPT = ChatPromptTemplate.from_messages([
@@ -75,6 +75,8 @@ async def _summarize_single_paper(
     query: str,
     chain,
     retriever,
+    openai_key: str,           
+    evaluator: RAGEvaluator,   
 ) -> tuple[str, str | None, list[Document], str | None]:
     """
     Summarize one paper asynchronously.
@@ -145,6 +147,7 @@ async def _summarize_single_paper(
             query=query,
             answer=response.content,
             context_docs=docs,
+            openai_api_key=openai_key,   # ← pass user's key
             paper_id=paper_id,
             latency=elapsed,
         )
@@ -177,15 +180,29 @@ def summarization_agent(state: ResearchState) -> ResearchState :
     """
     settings = get_settings()
     user_context = get_user_context()
+    missing_keys = []
+    if not user_context or not user_context.openai_api_key:
+        missing_keys.append("OpenAI")
+    if not user_context or not user_context.pinecone_api_key:
+        missing_keys.append("Pinecone")
+    if not user_context or not user_context.tavily_api_key:
+        missing_keys.append("Tavily")
+
+    if missing_keys:
+        raise RuntimeError(
+            f"Missing API key{'s' if len(missing_keys) > 1 else ''}: "
+            f"{', '.join(missing_keys)}. "
+            f"Go to Settings → API Keys to add them before analyzing."
+        )
     retriever = get_retriever(
-        pinecone_api_key=user_context.pinecone_api_key if user_context and user_context.pinecone_api_key else settings.pinecone_api_key,
-        tavily_api_key=user_context.tavily_api_key if user_context and user_context.tavily_api_key else settings.tavily_api_key
+        pinecone_api_key=user_context.pinecone_api_key,
+        tavily_api_key=user_context.tavily_api_key,
+        openai_api_key=user_context.openai_api_key,
     )
-    openai_key = (
-        user_context.openai_api_key
-        if user_context and user_context.openai_api_key
-        else settings.openai_api_key
-    )
+    openai_key = user_context.openai_api_key
+
+    evaluator = RAGEvaluator()   # ← now safe — no key needed at construction
+
     llm = ChatOpenAI(
         model= settings.openai_model,
         api_key= openai_key,
@@ -197,7 +214,14 @@ def summarization_agent(state: ResearchState) -> ResearchState :
     # ── Concurrent execution ──────────────────────────────────────────
     async def run_all():
         tasks = [
-            _summarize_single_paper(pid, state["query"], chain, retriever)
+            _summarize_single_paper(
+                pid,
+                state["query"],
+                chain,
+                retriever,
+                openai_key,    # ← pass through
+                evaluator,     # ← pass through
+            )
             for pid in state["paper_ids"]
         ]
         return await asyncio.gather(*tasks)

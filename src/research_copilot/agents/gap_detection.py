@@ -81,15 +81,29 @@ def gap_detection_agent(state: ResearchState) -> ResearchState:
     """
     settings = get_settings()
     user_context = get_user_context()
+    
+    missing_keys = []
+    if not user_context or not user_context.openai_api_key:
+        missing_keys.append("OpenAI")
+    if not user_context or not user_context.pinecone_api_key:
+        missing_keys.append("Pinecone")
+    if not user_context or not user_context.tavily_api_key:
+        missing_keys.append("Tavily")
+
+    if missing_keys:
+        raise RuntimeError(
+            f"Missing API key{'s' if len(missing_keys) > 1 else ''}: "
+            f"{', '.join(missing_keys)}. "
+            f"Go to Settings → API Keys to add them before analyzing."
+        )
+    
     retriever = get_retriever(
-        pinecone_api_key=user_context.pinecone_api_key if user_context and user_context.pinecone_api_key else settings.pinecone_api_key,
-        tavily_api_key=user_context.tavily_api_key if user_context and user_context.tavily_api_key else settings.tavily_api_key
+        pinecone_api_key=user_context.pinecone_api_key,
+        tavily_api_key=user_context.tavily_api_key,
+        openai_api_key=user_context.openai_api_key,
     )
-    openai_key = (
-        user_context.openai_api_key
-        if user_context and user_context.openai_api_key
-        else settings.openai_api_key
-    )
+    openai_key = user_context.openai_api_key
+        
     llm = ChatOpenAI(
         model=settings.openai_model,
         api_key=openai_key,

@@ -75,11 +75,22 @@ def planner_agent(state: ResearchState) -> ResearchState:
     errors = list(state.get("errors", []))
 
     user_context = get_user_context()
-    openai_key = (
-        user_context.openai_api_key
-        if user_context and user_context.openai_api_key
-        else settings.openai_api_key
-    )
+    missing_keys = []
+    if not user_context or not user_context.openai_api_key:
+        missing_keys.append("OpenAI")
+    if not user_context or not user_context.pinecone_api_key:
+        missing_keys.append("Pinecone")
+    if not user_context or not user_context.tavily_api_key:
+        missing_keys.append("Tavily")
+
+    if missing_keys:
+        raise RuntimeError(
+            f"Missing API key{'s' if len(missing_keys) > 1 else ''}: "
+            f"{', '.join(missing_keys)}. "
+            f"Go to Settings → API Keys to add them before analyzing."
+        )
+    openai_key = user_context.openai_api_key
+
     llm = ChatOpenAI(
         model=settings.openai_model,
         api_key=openai_key,
