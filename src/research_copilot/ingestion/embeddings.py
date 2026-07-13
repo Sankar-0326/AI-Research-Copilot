@@ -296,11 +296,30 @@ class CachedOpenAIEmbeddings(Embeddings):
         raise RuntimeError("embed_query failed after 5 attempts due to rate limiting.")
 
 
-def _get_dense_embeddings() -> CachedOpenAIEmbeddings:
+def _get_dense_embeddings(openai_api_key: str | None = None) -> CachedOpenAIEmbeddings:
+    """
+    Build cached OpenAI embeddings.
+    Priority: explicit param → contextvar → settings (None if removed from .env)
+    """
+    from research_copilot.api.user_context import get_user_context
     settings = get_settings()
+
+    # Prefer explicit key passed in
+    key = openai_api_key
+
+    # Fall back to contextvar (set by background task thread)
+    if not key:
+        user_ctx = get_user_context()
+        if user_ctx and user_ctx.openai_api_key:
+            key = user_ctx.openai_api_key
+
+    # Last resort — settings (will be None after .env cleanup)
+    if not key:
+        key = settings.openai_api_key
+
     base = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
-        api_key=settings.openai_api_key,
+        api_key=key,
     )
     return CachedOpenAIEmbeddings(base)
 
@@ -359,16 +378,20 @@ def embed_and_store(chunked_paper: ChunkedPaper, user_context = None) -> int:
 
     # ── Step 3: Generate dense vectors (cached) ───────────────────────
     # ── Use per-user OpenAI key if available ──────────────────────────
-    if user_context and user_context.openai_api_key:
-        from langchain_openai import OpenAIEmbeddings
-        from research_copilot.ingestion.embeddings import CachedOpenAIEmbeddings
-        base = OpenAIEmbeddings(
-            model=settings.openai_embedding_model,
-            api_key=user_context.openai_api_key,    # ← per-user key
+    if not user_context or not user_context.openai_api_key:
+        raise ValueError(
+            "OpenAI API key is required for embedding. "
+            "Please add your key in Settings → API Keys."
         )
-        dense_embeddings = CachedOpenAIEmbeddings(base)
-    else:
-        dense_embeddings = _get_dense_embeddings()  # ← fallback to .env
+    
+    from langchain_openai import OpenAIEmbeddings
+
+    base = OpenAIEmbeddings(
+        model=settings.openai_embedding_model,
+        api_key=user_context.openai_api_key,    # ← always user key
+    )
+    dense_embeddings = CachedOpenAIEmbeddings(base)
+    
     dense_vectors = dense_embeddings.embed_documents(chunk_texts)
     time.sleep(0.5)
 

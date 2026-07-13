@@ -83,7 +83,7 @@ class SemanticCache:
         self._entries: list[CacheEntry] = []   # parallel to FAISS index rows
 
         # Embedding model (lazy init)
-        self._embedder: OpenAIEmbeddings | None = None
+        
 
         # Load persisted state
         self._load()
@@ -98,13 +98,31 @@ class SemanticCache:
     # ── Embedding ─────────────────────────────────────────────────────────────
 
     def _get_embedder(self) -> OpenAIEmbeddings:
-        if self._embedder is None:
-            settings = get_settings()
-            self._embedder = OpenAIEmbeddings(
-                model=settings.openai_embedding_model,
-                api_key=settings.openai_api_key,
+        """
+        Build embedder using the current user's key from contextvar.
+        Not cached — per-user key means we can't share across requests.
+        Raises if no key available — caught by callers' try/except.
+        """
+        from research_copilot.api.user_context import get_user_context
+        settings = get_settings()
+
+        user_ctx = get_user_context()
+        api_key = (
+            user_ctx.openai_api_key
+            if user_ctx and user_ctx.openai_api_key
+            else None
+        )
+
+        if not api_key:
+            raise ValueError(
+                "OpenAI API key not available for semantic cache. "
+                "User must provide their key in Settings → API Keys."
             )
-        return self._embedder
+
+        return OpenAIEmbeddings(
+            model=settings.openai_embedding_model,
+            api_key=api_key,
+        )
 
     def _embed(self, text: str) -> np.ndarray:
         """

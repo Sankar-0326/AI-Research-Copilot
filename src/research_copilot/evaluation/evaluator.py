@@ -46,23 +46,29 @@ Score the relevance now.""")
 class RAGEvaluator:
     """
     Lightweight LLM-as-judge evaluator for RAG pipelines.
+    LLM is created lazily at evaluate() time using the user's key.
+    Never instantiated at module level.
     Uses a fast GPT-4o-mini call to score each agent output.
     """
 
     def __init__(self):
+        self._llm = None   # ← lazy, no key needed at construction
+
+    def _get_llm(self, openai_api_key: str):
+        """Build LLM with the provided key."""
         settings = get_settings()
-        # Use mini model for eval — cheaper, fast enough for scoring
-        self._llm = ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
+        return ChatOpenAI(
+            model="gpt-4o-mini",
+            api_key=openai_api_key,
             temperature=0,
         )
 
-    def _score(self, prompt: ChatPromptTemplate, **kwargs) -> tuple[float, str]:
+    def _score(self, prompt: ChatPromptTemplate, openai_api_key: str, **kwargs) -> tuple[float, str]:
         """Run a scoring prompt and parse the JSON result."""
         import json
         try:
-            chain = prompt | self._llm
+            llm = self._get_llm(openai_api_key)
+            chain = prompt | llm
             response = chain.invoke(kwargs)
             parsed = json.loads(response.content)
             return float(parsed["score"]), parsed.get("reason", "")
@@ -76,6 +82,7 @@ class RAGEvaluator:
         query: str,
         answer: str,
         context_docs: list[Document],
+        openai_api_key: str,              # ← required, passed by caller
         paper_id: str | None = None,
         latency: float = 0.0,
         from_cache: bool = False,
@@ -92,12 +99,14 @@ class RAGEvaluator:
 
         faithfulness_score, faith_reason = self._score(
             FAITHFULNESS_PROMPT,
+            openai_api_key,
             context=context_str,
             answer=answer,
         )
 
         relevance_score, rel_reason = self._score(
             CONTEXT_RELEVANCE_PROMPT,
+            openai_api_key,
             query=query,
             context=context_str,
         )

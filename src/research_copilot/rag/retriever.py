@@ -20,12 +20,18 @@ class ResearchRetriever:
     - Combined hybrid retrieval (vector + web)
     """
 
-    def __init__(self, pinecone_api_key: str | None = None, tavily_api_key: str | None = None,):
+    def __init__(
+            self, 
+            pinecone_api_key: str | None = None, 
+            tavily_api_key: str | None = None,
+            openai_api_key: str | None = None, 
+            ):
         self.settings = get_settings()
         self._tavily = None     # lazy init
         self._retriever = None  # lazy init — built on first retrieval call
         self._pinecone_key = pinecone_api_key
         self._tavily_key = tavily_api_key
+        self._openai_key = openai_api_key 
 
     def _get_hybrid_retriever(self) -> PineconeHybridSearchRetriever:
         """
@@ -52,7 +58,7 @@ class ResearchRetriever:
             else get_pinecone_index()
         )
         bm25 = get_bm25_encoder()
-        embeddings = _get_dense_embeddings()
+        embeddings = _get_dense_embeddings(openai_api_key=self._openai_key)
 
         retriever = PineconeHybridSearchRetriever(
             index=index,

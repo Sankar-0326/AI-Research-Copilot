@@ -10,12 +10,12 @@ class Settings(BaseSettings):
     )
 
     # OpenAI
-    openai_api_key: str 
+    openai_api_key: str | None = None 
     openai_model: str = "gpt-4o"
     openai_embedding_model: str = "text-embedding-3-small"
 
     # Pinecone
-    pinecone_api_key: str
+    pinecone_api_key: str | None = None
     pinecone_index_name: str = "research-copilot"
     pinecone_environment: str = "us-east-1"
 
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 5
 
     # Tavily
-    tavily_api_key: str
+    tavily_api_key: str | None = None
 
     # Hybrid search
     hybrid_alpha: float = 0.5
@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     # Encryption
     fernet_master_key: str
+
+    langsmith_tracing: str | None = None
+    langsmith_endpoint: str | None = None
+    langsmith_api_key: str | None = None
+    langsmith_project: str | None = None
 
 
 # @lru_cache() - ensures settings are loaded from disk only once and reused across the app — a production pattern.

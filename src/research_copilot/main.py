@@ -9,6 +9,34 @@ from research_copilot.config import get_settings
 from research_copilot.logging import setup_logging, get_logger
 from research_copilot.db import dispose_engine
 
+# ── LangSmith setup — must happen before any langchain import ─────────────
+import os
+from dotenv import load_dotenv
+load_dotenv()   # loads .env into os.environ immediately
+
+def setup_langsmith():
+    """
+    Explicitly set LangSmith env vars from settings into os.environ.
+    LangChain reads these directly from os.environ — not from Pydantic settings.
+    """
+    settings = get_settings()
+
+    if not settings.langsmith_api_key:
+        return   # skip if no key provided
+
+    os.environ["LANGSMITH_TRACING"]       = "true"
+    os.environ["LANGSMITH_ENDPOINT"]      = settings.langsmith_endpoint or "https://api.smith.langchain.com"
+    os.environ["LANGSMITH_API_KEY"]       = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"]       = settings.langsmith_project or "research-copilot"
+    
+
+    import structlog
+    logger = structlog.get_logger("langsmith")
+    logger.info(
+        "langsmith_tracing_enabled",
+        project=settings.langsmith_project,
+        endpoint=settings.langsmith_endpoint,
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -20,13 +48,24 @@ async def lifespan(app: FastAPI):
     setup_logging()                         
     logger = get_logger("startup")
     settings = get_settings()
+
+    setup_langsmith()
     
     logger.info("Starting AI Research Copilot", env=settings.app_env)
 
-    # Pre-warm connections
-    from research_copilot.rag import get_retriever
-    get_retriever()
-    logger.info("Pinecone connection ready")
+    # ── Pre-warm Pinecone only if a system key exists ─────────────────
+    # In user-key-only mode this is skipped — each user's retriever
+    # initializes lazily on their first request
+    if settings.pinecone_api_key:
+        from research_copilot.rag import get_retriever
+        get_retriever()
+        logger.info("pinecone_prewarm_complete")
+    else:
+        logger.info(
+            "pinecone_prewarm_skipped",
+            reason="no system key — user keys initialize on first request",
+        )
+
 
 
     yield

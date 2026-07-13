@@ -7,6 +7,7 @@ _retriever: ResearchRetriever | None = None
 def get_retriever(
         pinecone_api_key: str | None = None,
         tavily_api_key: str | None = None,
+        openai_api_key: str | None = None,  
         ) -> ResearchRetriever:
     """
     Return retriever instance.
@@ -15,10 +16,13 @@ def get_retriever(
     """
     global _retriever
 
-    if pinecone_api_key:
-        # Per-user — never cache, always fresh
-        return ResearchRetriever(pinecone_api_key=pinecone_api_key, tavily_api_key=tavily_api_key)
-
+    if pinecone_api_key or tavily_api_key or openai_api_key:
+        return ResearchRetriever(
+            pinecone_api_key=pinecone_api_key,
+            tavily_api_key=tavily_api_key,
+            openai_api_key=openai_api_key,   
+        )
+    
     if _retriever is None:
         _retriever = ResearchRetriever()
 
