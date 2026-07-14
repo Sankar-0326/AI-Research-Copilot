@@ -90,6 +90,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.app_env == "development" else [],
+        allow_credentials=True,    # ← required for cookies
         allow_methods=["*"],
         allow_headers=["*"],
     )

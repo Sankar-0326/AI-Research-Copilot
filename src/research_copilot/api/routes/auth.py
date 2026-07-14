@@ -1,5 +1,6 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr, Field
@@ -16,10 +17,24 @@ from research_copilot.db.database import get_db_session
 from research_copilot.db.models.user import User
 from research_copilot.db.models.api_keys import UserAPIKey, APIKeyProvider
 from research_copilot.logging import get_logger
+from research_copilot.config import get_settings
 
 logger = get_logger("routes.auth")
 router = APIRouter(prefix="/auth", tags=["Auth"])
+settings = get_settings()
 
+def set_refresh_cookie(response: Response, refresh_token: str, expire_days: int):
+    """Set refresh token as httpOnly cookie — inaccessible to JavaScript."""
+    response.set_cookie(
+        key="rc_refresh",
+        value=refresh_token,
+        httponly=True,       # ← JS cannot read this
+        secure= settings.app_env == "production",  # ← False in dev, True in prod
+        # ← HTTPS only (set False for local dev)
+        samesite="lax",      # ← CSRF protection
+        max_age=expire_days * 24 * 60 * 60,
+        path="/", # ← cookie only sent to refresh endpoint
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Schemas
@@ -75,6 +90,7 @@ class UserResponse(BaseModel):
 )
 async def register(
     request: RegisterRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -101,9 +117,17 @@ async def register(
 
     logger.info("user_registered", user_id=str(user.id)[:8], email=request.email)
 
+
+    
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+
+    set_refresh_cookie(response, refresh_token, settings.jwt_refresh_expire_days)
+
     return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
+        access_token=access_token,
+        refresh_token="",    # ← no longer returned in body
+        token_type="bearer",
     )
 
 
@@ -114,6 +138,7 @@ async def register(
 )
 async def login(
     request: LoginRequest,
+    response: Response,  
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -146,9 +171,15 @@ async def login(
 
     logger.info("user_logged_in", user_id=str(user.id)[:8])
 
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+
+    set_refresh_cookie(response, refresh_token, settings.jwt_refresh_expire_days)
+
     return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
+        access_token=access_token,
+        refresh_token="",    # ← no longer returned in body
+        token_type="bearer",
     )
 
 
@@ -158,15 +189,22 @@ async def login(
     summary="Refresh access token using refresh token",
 )
 async def refresh_token(
-    request: RefreshRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db_session),
+    rc_refresh: str | None = Cookie(default=None),   # ← read from cookie
 ):
     """
     Exchange a valid refresh token for a new access + refresh token pair.
     Both tokens are rotated on every refresh for security.
     """
+    if not rc_refresh:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No refresh token provided.",
+        )
+
     try:
-        payload = decode_token(request.refresh_token, expected_type="refresh")
+        payload = decode_token(rc_refresh, expected_type="refresh")
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -189,10 +227,15 @@ async def refresh_token(
 
     logger.info("tokens_refreshed", user_id=user_id[:8])
 
-    # Rotate both tokens
+    new_access_token=create_access_token(user_id)
+    new_refresh_token=create_refresh_token(user_id)
+
+    set_refresh_cookie(response, new_refresh_token, settings.jwt_refresh_expire_days)
+
     return TokenResponse(
-        access_token=create_access_token(user_id),
-        refresh_token=create_refresh_token(user_id),
+        access_token=new_access_token,
+        refresh_token="",    # ← not in body
+        token_type="bearer",
     )
 
 
@@ -334,3 +377,15 @@ async def delete_api_key(
         user_id=str(user.id)[:8],
         provider=provider.value,
     )
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie(
+        key="rc_refresh",
+        path="/",
+        httponly=True,
+        secure=settings.app_env == "production",
+        samesite="lax",
+    )
+    return {"message": "Logged out successfully."}

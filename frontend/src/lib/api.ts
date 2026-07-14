@@ -4,7 +4,8 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 // Token storage
 // Tokens live in memory only — never localStorage (XSS risk)
 // Access token: short-lived, kept in memory
-// Refresh token: stored in sessionStorage (survives page refresh, cleared on tab close)
+// Access token: short-lived, kept in memory only
+// Refresh token: stored in httpOnly cookie (set by server, JS cannot read it)
 // ─────────────────────────────────────────────────────────────────────────────
 
 let accessToken: string | null = null
@@ -14,13 +15,9 @@ export const tokenStorage = {
   setAccess: (token: string) => { accessToken = token },
   clearAccess: () => { accessToken = null },
 
-  getRefresh: () => sessionStorage.getItem('rc_refresh'),
-  setRefresh: (token: string) => sessionStorage.setItem('rc_refresh', token),
-  clearRefresh: () => sessionStorage.removeItem('rc_refresh'),
-
   clearAll: () => {
     accessToken = null
-    sessionStorage.removeItem('rc_refresh')
+    // Refresh token lives in httpOnly cookie — cleared server-side via /auth/logout
   },
 }
 
@@ -32,6 +29,7 @@ export const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30_000,
+  withCredentials: true,   // ← ensures cookies are sent with every request
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,15 +73,11 @@ api.interceptors.response.use(
     }
 
     // Only attempt refresh on 401 and only once per request
-    if (error.response?.status !== 401 || original._retry) {
-      return Promise.reject(error)
-    }
-
-    const refreshToken = tokenStorage.getRefresh()
-    if (!refreshToken) {
-      // No refresh token — force logout
-      tokenStorage.clearAll()
-      window.location.href = '/login'
+    if (
+      error.response?.status !== 401 ||
+      original._retry ||
+      original.url?.includes('/auth/refresh')   // ← break the loop
+    ) {
       return Promise.reject(error)
     }
 
@@ -101,12 +95,13 @@ api.interceptors.response.use(
     isRefreshing = true
 
     try {
-      const { data } = await axios.post('/api/auth/refresh', {
-        refresh_token: refreshToken,
-      })
+      const { data } = await axios.post(
+        '/api/auth/refresh',
+        {},                    // ← empty body, cookie carries the token
+        { withCredentials: true }
+      )
 
       tokenStorage.setAccess(data.access_token)
-      tokenStorage.setRefresh(data.refresh_token)
 
       processQueue(null, data.access_token)
 
@@ -190,9 +185,6 @@ export const authApi = {
   login: (email: string, password: string) =>
     api.post<TokenResponse>('/auth/login', { email, password }),
 
-  refresh: (refresh_token: string) =>
-    api.post<TokenResponse>('/auth/refresh', { refresh_token }),
-
   me: () =>
     api.get<UserResponse>('/auth/me'),
 
@@ -204,6 +196,11 @@ export const authApi = {
 
   deleteKey: (provider: string) =>
     api.delete(`/auth/keys/${provider}`),
+
+  logout: () => api.post('/auth/logout'),
+
+  refresh: (_token: string) => api.post<TokenResponse>('/auth/refresh', {}, { withCredentials: true }),
+
 }
 
 // Papers
